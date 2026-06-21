@@ -327,6 +327,24 @@ an unfamiliar host, and inspect the organs in `plugins/` — you can read, revie
 
 ---
 
+## Disclaimer
+
+EvoLua is **experimental research / educational software**, provided **"as is"** under the
+[MIT License](LICENSE) with **no warranty of any kind**. Use it **at your own risk**.
+
+By design it:
+- **runs with broad permissions** — organs execute in a deliberately permissive Lua sandbox (`os`/`io` open);
+- **observes your host** — per-process stats, OS error logs, and (via the explorer) scans directories, log files, listening ports, and your `$PATH` (read-only);
+- **can self-replicate** — with `--clone` it spawns real OS processes (bounded, but real);
+- **ships configured *unattended* in this copy** — `autonomy_ceiling = "act"` lets it take reversible actions and even download a model without asking. Set `autonomy_ceiling = "report"` for the safe, approval-gated default.
+
+Review `watch_dirs` / `watch_logs` / `autonomy_ceiling` and inspect the organs it grows under
+`plugins/` before running on an important or unfamiliar system, and only run it where you are
+authorized to. The authors and contributors accept **no liability** for any damage, data loss,
+resource consumption, or other consequences of running this software.
+
+---
+
 ## Documentation
 
 - [docs/DEMO.md](docs/DEMO.md) — **annotated capture of a real run** (for reviewers: see what it actually does)

@@ -16,7 +16,7 @@ yavrularına **amaç edindirir**, **ortamını keşfeder** ve geri rapor verir. 
 Tek kasıtlı istisna, organizmanın vital'lerini gözleyip geri besleyen ince, host-tarafı bir
 **süpervizör** ("beyin sapı")dır — gözler, asla yönlendirmez (aşağıda).
 
-> Gerçek bir koşunun açıklamalı çıktısı için: **[docs/DEMO.md](docs/DEMO.md)**.
+> Gerçek bir koşunun açıklamalı çıktısı için: **[docs/DEMO.tr.md](docs/DEMO.tr.md)**.
 
 ---
 
@@ -210,7 +210,7 @@ bir dosya dansıdır. Her karar/aksiyon `state/audit.log`'a yazılır.
 
 Birim test koşumu **yoktur** — doğrulama sınırlı koşularla yapılır. Tam doğrulama suite'i
 [docs/TESTING.md](docs/TESTING.md)'de (**25 kontrol, hepsi yeşil**). Gerçek bir koşunun
-açıklamalı çıktısı: [docs/DEMO.md](docs/DEMO.md).
+açıklamalı çıktısı: [docs/DEMO.tr.md](docs/DEMO.tr.md).
 
 ```bash
 ./clean.sh   # evrimleşmiş organları/raporları/belleği sil; sonraki koşu sıfırdan
@@ -227,9 +227,27 @@ Organlar kasıtlı geniş yetkili bir Lua sandbox'ında koşar (`os`/`io` açık
 
 ---
 
+## Sorumluluk reddi
+
+EvoLua **deneysel araştırma / eğitim amaçlı yazılımdır**; [MIT Lisansı](LICENSE) altında
+**"olduğu gibi"**, **hiçbir garanti vermeden** sunulur. **Kendi sorumluluğunda** kullan.
+
+Tasarımı gereği:
+- **geniş yetkilerle çalışır** — organlar kasıtlı geniş yetkili bir Lua sandbox'ında koşar (`os`/`io` açık);
+- **host'unu gözler** — süreç-başına istatistik, OS hata logları ve (explorer ile) dizinleri, log dosyalarını, dinleyen portları ve `$PATH`'ini tarar (salt-okunur);
+- **kendini çoğaltabilir** — `--clone` ile gerçek OS süreçleri doğurur (sınırlı, ama gerçek);
+- **bu kopyada *gözetimsiz* gelir** — `autonomy_ceiling = "act"` geri-alınabilir aksiyonları (hatta sormadan model indirmeyi) açar. Güvenli, onay-kapılı varsayılan için `autonomy_ceiling = "report"` yap.
+
+Önemli ya da tanımadığın bir sistemde çalıştırmadan önce `watch_dirs`/`watch_logs`/
+`autonomy_ceiling`'i gözden geçir, ürettiği organları (`plugins/`) incele ve yalnızca yetkili
+olduğun yerde çalıştır. Yazarlar ve katkıda bulunanlar; oluşabilecek hasar, veri kaybı, kaynak
+tüketimi veya diğer sonuçlardan **sorumlu değildir**.
+
+---
+
 ## Dokümantasyon
 
-- [docs/DEMO.md](docs/DEMO.md) — gerçek bir koşunun açıklamalı çıktısı (inceleyenler için)
+- [docs/DEMO.tr.md](docs/DEMO.tr.md) — gerçek bir koşunun açıklamalı çıktısı (inceleyenler için)
 - [docs/COLONY.md](docs/COLONY.md) — Faz 5 derinlemesine
 - [docs/TESTING.md](docs/TESTING.md) — doğrulama suite'i
 - [docs/ROADMAP.md](docs/ROADMAP.md) · [docs/BUILD-PLAN.md](docs/BUILD-PLAN.md) — tasarım gerekçeleri · build planı

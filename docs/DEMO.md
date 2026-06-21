@@ -1,5 +1,7 @@
 # EvoLua — annotated demo run
 
+🇬🇧 English · [🇹🇷 Türkçe](DEMO.tr.md)
+
 This is a **real, unedited capture** of a single bounded run, so a reviewer can see what the
 organism actually does without running it. Reproduce it with:
 
