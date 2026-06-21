@@ -1,0 +1,39 @@
+# Rust build output (single-binary crate)
+/target/
+# Cargo.lock IS committed — this is a binary, so we want reproducible builds.
+
+# Embedded model (build prereq for the embed_smol feature; not in the repo)
+models/smol.gguf
+
+# ── EvoLua runtime artifacts ────────────────────────────────────────────────
+# The organism regenerates all of these as it lives. The binary build writes them
+# into an OS data dir; a plain-lua run writes them under lua/ or the cwd. None are
+# source — never commit them. (A hand-authored plugin without the gen_ prefix can
+# still be committed.)
+plugins/gen_*.lua
+lua/plugins/gen_*.lua
+reports/
+lua/reports/
+state/
+lua/state/
+models/
+lua/models/
+approvals/
+lua/approvals/
+sandbox/
+lua/sandbox/
+colony/
+lua/colony/
+
+# stray nested dir if EvoLua is ever launched from inside its own folder
+evolua/
+
+# OS / editor noise
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# keep intentionally-empty dirs if ever added
+!**/.gitkeep

@@ -1,0 +1,71 @@
+# EvoLua — standalone single-binary crate.
+#
+# This is a SELF-CONTAINED workspace (note the empty [workspace] table below):
+# Cargo treats this directory as its own workspace root, so it does NOT join —
+# and cannot affect — the parent mini-lua-coder workspace. Build it on its own:
+#
+#   cd evolua && cargo build --release
+#   ./target/release/evolua --ticks 60 --tick-seconds 0.2
+#
+# The Lua organism (lua/) is embedded into the binary via rust-embed and runs in
+# an in-process mlua (Lua 5.4, vendored & statically linked) VM. No external lua
+# interpreter, no shared libs — one file you can copy anywhere.
+[package]
+name = "evolua"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A self-evolving Lua organism that perceives its environment, grows its own plugins, and reports back — as a single binary."
+
+# Detach from the parent workspace without editing it.
+[workspace]
+
+[[bin]]
+name = "evolua"
+path = "src/main.rs"
+
+[dependencies]
+# In-process Lua 5.4, built from vendored source and statically linked → the
+# interpreter ships inside the binary (same stack mini-lua-coder uses).
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+# Embed the lua/ source tree into the binary at compile time.
+rust-embed = "8"
+anyhow = "1"
+
+# Faz 2 — embedded "decision brain" (opt-in). With `llm` off, the binary stays
+# mlua-only and the Lua reasoner falls back to rules. llama-cpp-2 default-features
+# = false → CPU backend (GPU is Faz 4, separate feature).
+llama-cpp-2 = { version = "0.1", default-features = false, optional = true }
+encoding_rs = { version = "0.8", optional = true }
+
+# Faz 4 — model self-upgrade (opt-in). Downloads a larger GGUF over HTTPS and
+# verifies its checksum. ureq is pure-Rust (rustls TLS); sha2 for integrity.
+ureq = { version = "2", optional = true }
+sha2 = { version = "0.10", optional = true }
+
+[features]
+default = []
+# Embedded LLM decision brain (in-process llama.cpp, CPU).
+llm = ["dep:llama-cpp-2", "dep:encoding_rs"]
+# Bake the tiny model into the binary (expects evolua/models/smol.gguf). Implies `llm`.
+embed_smol = ["llm"]
+
+# Faz 4 — runtime model acquisition (download + checksum). Exposes model_acquire.
+acquire = ["dep:ureq", "dep:sha2"]
+
+# GPU backends (build-time; see docs/ROADMAP.md "GPU"). Each implies `llm`.
+#   - gpu-metal: macOS (present on every Mac; CPU fallback via n_gpu_layers=0)
+#   - gpu-cuda / gpu-vulkan: needs that GPU runtime present on the target machine
+# A single static binary can carry ONE of these. True "GPU-if-present-else-CPU"
+# across machines needs llama.cpp's GGML_BACKEND_DL (multi-file) — not a cargo
+# feature here; documented as the advanced path.
+gpu-metal  = ["llm", "llama-cpp-2/metal"]
+gpu-cuda   = ["llm", "llama-cpp-2/cuda"]
+gpu-vulkan = ["llm", "llama-cpp-2/vulkan"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+# NOTE: no `panic = "abort"` here — mlua needs unwinding to convert Lua errors.
