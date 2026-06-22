@@ -39,6 +39,21 @@ cfg.state_dir   = abs(cfg.state_dir)
 for i, d in ipairs(cfg.watch_dirs) do cfg.watch_dirs[i] = abs(d) end
 for i, f in ipairs(cfg.watch_logs) do cfg.watch_logs[i] = abs(f) end
 
+-- VERTICAL GENE TRANSFER (#11): a clone's parent colony writes <home>/inherited.lua
+-- with its best genes for the child's goal template. Load it onto cfg so the directed
+-- drive grows that organ PRE-TUNED instead of from template defaults.
+do
+  local fh = io.open(BASE .. "/inherited.lua", "r")
+  if fh then
+    local src = fh:read("*a"); fh:close()
+    local chunk = load(src, "inherited", "t", {})
+    if chunk then
+      local ok, t = pcall(chunk)
+      if ok and type(t) == "table" then cfg.inherited_genes = t end
+    end
+  end
+end
+
 -- ---- minimal flag parser -------------------------------------------------
 local function parse(args)
   local i = 1
@@ -64,6 +79,7 @@ local function parse(args)
     elseif a == "--no-colony" then cfg.colony = false
     elseif a == "--no-supervisor" then cfg.supervisor = false
     elseif a == "--no-explorer" then cfg.explorer = false
+    elseif a == "--no-rule" then cfg.rule_seed = false
     elseif a == "--no-explore-expand" then cfg.explore_expand = false
     elseif a == "--explore-root" then cfg.explore_roots = cfg.explore_roots or {}; table.insert(cfg.explore_roots, val())
     elseif a == "--colony-id" then cfg.colony_id = val()
@@ -94,6 +110,7 @@ EvoLua — a self-evolving Lua organism
   --no-colony                do not seed the colony organ at all
   --no-supervisor            do not seed the host-brainstem watch organ
   --no-explorer              do not seed the environment-exploration organ
+  --no-rule                  do not seed the evolvable rule-DSL organ
   --no-explore-expand        explore, but don't auto-expand perception (watch dirs/logs)
   --explore-root <path>      add a directory the explorer may wander (repeatable)
   --clone-max-peers <n>      hard cap on simultaneous live instances (default: 3)
@@ -160,6 +177,7 @@ end
 if cfg.colony then seed_once("colony") end
 if cfg.supervisor then seed_once("supervisor") end
 if cfg.explorer then seed_once("explorer") end
+if cfg.rule_seed then seed_once("rule") end
 
 -- graceful Ctrl-C if the host Lua exposes signals (optional; safe if absent)
 local ok_sig = pcall(function()

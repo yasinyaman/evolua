@@ -23,6 +23,9 @@ function Autonomy.new(ctx)
   -- approvals/ lives next to state/ under the data home; ensure subdirs exist
   self.inbox = (ctx.cfg.approvals_dir) or (ctx.cfg.reports_dir:gsub("/reports$", "") .. "/approvals")
   os.execute('mkdir -p "' .. self.inbox .. '/approved" "' .. self.inbox .. '/done" 2>/dev/null')
+  self.traces = {}   -- outcome-credit eligibility traces (#6): {organ, entity, baseline, born}
+  -- evolved rule organs emit action.request; route them through the ladder (above)
+  ctx.bus:subscribe("action.request", function(ev) self:request(ev.data); return { handled = true } end, "autonomy")
   return self
 end
 
@@ -33,7 +36,7 @@ end
 
 -- decide the effective level for a decision and carry it out.
 -- decision = { entity, hypothesis, confidence, action, proposed = {verb,target_pid,reversible,desc,undo} }
-function Autonomy:consider(decision)
+function Autonomy:consider(decision, extra_ceiling)
   local cfg = self.ctx.cfg
   local req  = LEVELS[decision.action or "report"] or LEVELS.report
   local conf = decision.confidence or 0
@@ -51,9 +54,31 @@ function Autonomy:consider(decision)
     end
   end
 
-  local eff = math.min(gated, self.ceiling)
+  local eff = math.min(gated, self.ceiling, extra_ceiling or 99)
   self:_execute(eff, decision)
   return eff, NAMES[eff]
+end
+
+-- an EVOLVED organ (rule-DSL "act") REQUESTS an action. It never executes — the
+-- request is routed through the SAME ladder as the reasoner, but capped MORE
+-- conservatively: mutation-generated actuators are less trusted, so by default
+-- (evolved_action_ceiling="suggest") their actions go to the approval inbox, never
+-- autonomous. The safe-list is the second gate (the grammar already excludes kill).
+function Autonomy:request(req)
+  local cfg = self.ctx.cfg
+  if cfg.evolved_actions == false then return end
+  if not (req and req.verb and self.safe[req.verb]) then return end   -- never unsafe/kill
+  if not req.pid and req.verb ~= "notify" then return end             -- need a target to act on
+  local decision = {
+    entity = req.entity or "?",
+    hypothesis = req.reason or ("evolved organ requests " .. req.verb),
+    confidence = req.confidence or 0.7,
+    action = "act",                                  -- requested level; gating lowers it
+    proposed = { verb = req.verb, target_pid = req.pid, reversible = true,
+                 entity = req.entity, requester = req.from, desc = req.reason },
+  }
+  local cap = LEVELS[cfg.evolved_action_ceiling or "suggest"] or LEVELS.suggest
+  self:consider(decision, cap)
 end
 
 function Autonomy:_execute(level, d)
@@ -100,6 +125,7 @@ function Autonomy:_propose(d)
   fh:write(string.format("REVERSIBLE: %s\n", act.reversible and "yes" or "no"))
   fh:write(string.format("WHY: %s\n", d.hypothesis or ""))
   fh:write(string.format("UNDO: %s\n", act.undo or "-"))
+  if act.requester then fh:write(string.format("REQUESTER: %s\n", act.requester)) end
   -- model_upgrade carries acquisition context the approval must preserve so the
   -- download can be enacted on approval (poll_approvals reads these back).
   if act.verb == "model_upgrade" then
@@ -155,6 +181,17 @@ function Autonomy:_enact(act, how)
   end
   self:audit(string.format("ENACTED(%s) %s target=%s", how or "?", act.verb,
     tostring(act.target_pid or act.tier_name or "-")))
+  -- OUTCOME CREDIT (#6): if an evolved organ requested this action on a world-model
+  -- entity, register an eligibility trace; settle_outcomes() rewards the requester
+  -- later IF the target's measured load actually dropped — fakeproof, since the
+  -- organ cannot fabricate another process's cpu reading.
+  if act.requester and act.entity and self.ctx.worldmodel then
+    local e = self.ctx.worldmodel.entities[act.entity]
+    self.traces[#self.traces + 1] = {
+      organ = act.requester, entity = act.entity,
+      baseline = (e and e.cpu_avg) or 0, born = self.ctx.kernel.tick,
+    }
+  end
 end
 
 -- poll the approval inbox: enact anything the user moved into approved/, then
@@ -171,6 +208,10 @@ function Autonomy:poll_approvals()
         local pid = tonumber(txt:match("TARGET_PID:%s*(%d+)"))
         if verb then
           local act = { verb = verb, target_pid = pid }
+          act.requester = (txt:match("REQUESTER:%s*([^\n\r]+)") or ""):gsub("%s+$", "")
+          act.entity    = (txt:match("ENTITY:%s*([^\n\r]+)") or ""):gsub("%s+$", "")
+          if act.requester == "" then act.requester = nil end
+          if act.entity == "" then act.entity = nil end
           if verb == "model_upgrade" then
             local function field(k) local v = txt:match(k .. ":%s*([^\n\r]+)"); return v and v:gsub("%s+$", "") end
             act.tier = tonumber(field("TIER"))
@@ -184,6 +225,36 @@ function Autonomy:poll_approvals()
       end
     end
   end
+end
+
+-- settle outcome-credit traces: once a trace is older than the outcome window,
+-- compare the target entity's current load to the baseline at action time. If it
+-- dropped, reward the requesting organ (temporal credit for a world improvement,
+-- not for firing). Called each tick by the kernel. Correlation, not proof — but
+-- the organ took a real reversible action and cannot fake the worldmodel reading.
+function Autonomy:settle_outcomes()
+  if not self.traces or #self.traces == 0 then return end
+  local cfg, wm = self.ctx.cfg, self.ctx.worldmodel
+  local now = self.ctx.kernel.tick
+  local ttl = cfg.outcome_window or 15
+  local keep = {}
+  for _, tr in ipairs(self.traces) do
+    if (now - tr.born) >= ttl then
+      local e = wm and wm.entities[tr.entity]
+      local cur = (e and e.cpu_avg) or 0
+      local drop = tr.baseline - cur                 -- positive = the target cooled down
+      if drop > (cfg.outcome_min_drop or 5) then
+        local reward = math.min(drop / 10, cfg.outcome_max_reward or 5)
+        self.ctx.bus:emit_raw("self.reward", { owner = tr.organ, amount = reward })
+        self:audit(string.format("OUTCOME +%.2f → %s (entity=%s cpu %.0f→%.0f)",
+          reward, tr.organ, tr.entity, tr.baseline, cur))
+      end
+      -- expired: dropped whether or not it paid off
+    else
+      keep[#keep + 1] = tr
+    end
+  end
+  self.traces = keep
 end
 
 return Autonomy

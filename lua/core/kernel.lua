@@ -34,7 +34,7 @@ function Kernel.new(cfg)
 
   -- shared organism context handed to every subsystem & plugin
   local ctx = { cfg = cfg, log = log, kernel = self }
-  ctx.bus      = Bus.new(log)
+  ctx.bus      = Bus.new(log, cfg)   -- cfg carries the honest-reward tunables
   ctx.memory   = Memory.new(cfg.state_dir .. "/memory.lua")
   ctx.registry = Registry.new(ctx)
   ctx.reporter = Reporter.new(ctx)
@@ -124,6 +124,8 @@ function Kernel:run()
 
     -- 5) check the approval inbox (user-approved actions) — cheap dir scan
     pcall(function() ctx.autonomy:poll_approvals() end)
+    -- 5a) settle outcome-credit traces (reward organs whose actions cooled a target)
+    pcall(function() ctx.autonomy:settle_outcomes() end)
 
     -- 5b) meta-evolution: occasionally reconsider which model fits the host
     if self.tick % (self.cfg.model_check_every or 200) == 0 then

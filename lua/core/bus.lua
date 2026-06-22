@@ -6,10 +6,11 @@
 local Bus = {}
 Bus.__index = Bus
 
-function Bus.new(log)
+function Bus.new(log, cfg)
   return setmetatable({
     subs = {},        -- event_type -> { {id=, fn=, owner=} ... }
     log = log,
+    cfg = cfg or {},  -- honest-reward tunables (reward_base/gap_cap/cost_weight/share)
     -- per-event-type bookkeeping used by the evolver to detect "needs"
     stats = {},       -- type -> { fired=, handled=, unhandled_streak= }
     history = {},     -- recent events (ring buffer)
@@ -43,6 +44,15 @@ end
 
 -- publish a stimulus; returns number of reactors that claimed to handle it
 function Bus:emit(t, payload)
+  -- re-entrancy guard: reactors may emit derived stimuli (legit pipelines), but a
+  -- cycle (e.g. two rule organs pinging each other via alert.*) would recurse to a
+  -- C-stack overflow. Cap the depth and bail instead of running the loop to death.
+  self._depth = (self._depth or 0) + 1
+  if self._depth > ((self.cfg and self.cfg.max_emit_depth) or 8) then
+    self._depth = self._depth - 1
+    if self.log then self.log:warn("bus: emit-depth cap on '%s' — breaking a possible emit loop", t) end
+    return 0
+  end
   local ev = { type = t, data = payload or {}, at = os.time() }
   local s = stat(self, t)
   s.fired = s.fired + 1
@@ -51,24 +61,52 @@ function Bus:emit(t, payload)
   table.insert(self.history, ev)
   if #self.history > self.hcap then table.remove(self.history, 1) end
 
+  -- HONEST REWARD: fitness is derived from observable bus facts, NOT from the
+  -- reward number the organ declares about itself (the old `res.reward`, which
+  -- let an organ — e.g. the colony every heartbeat — mint its own fitness).
+  --   gap   = surprise: filling a starved stimulus (high unhandled_streak) is
+  --           worth more than re-handling a metronome (heartbeat → streak 0).
+  --   share = a stimulus's credit is split across its co-handlers (#10): a lone
+  --           handler of a real need outranks one of N riders on the same event.
+  --   cost  = measured reactor CPU time is subtracted (#5 parsimony): a pricey
+  --           reactor can't out-earn a lean one doing the same job.
+  -- The organ's res.reward is carried only as telemetry (`hint`), never fitness.
+  local cfg    = self.cfg or {}
+  local base   = cfg.reward_base or 1
+  local gapcap = cfg.reward_gap_cap or 8
+  local costw  = cfg.reward_cost_weight or 0.5
+  local share_on = cfg.fitness_share ~= false
+  local gap    = 1 + math.min(s.unhandled_streak, gapcap)  -- streak BEFORE this emit
+
   local handled = 0
+  local claimed = {}     -- handlers that earned credit, paid after the loop
   local list = self.subs[t]
   if list then
     for _, h in ipairs(list) do
+      local t0 = os.clock()
       local ok, res = pcall(h.fn, ev)
+      local cost = os.clock() - t0
       if not ok then
         if self.log then self.log:warn("reactor '%s' errored on '%s': %s", h.owner, t, tostring(res)) end
         -- a throwing reactor emits a self-stimulus the organism can react to
         self:emit_raw("self.error", { owner = h.owner, on = t, err = tostring(res) })
       elseif res == true or (type(res) == "table" and res.handled) then
         handled = handled + 1
-        if type(res) == "table" and res.reward and h.owner then
-          self:emit_raw("self.reward", { owner = h.owner, amount = res.reward })
-        else
-          self:emit_raw("self.reward", { owner = h.owner, amount = 1 })
+        if h.owner then
+          claimed[#claimed + 1] = { owner = h.owner, cost = cost,
+            hint = (type(res) == "table" and res.reward) or nil }
         end
       end
     end
+  end
+
+  -- distribute the stimulus's credit across THIS emit's handlers
+  local share = share_on and math.max(1, #claimed) or 1
+  for _, c in ipairs(claimed) do
+    local amount = (base * gap) / share - costw * c.cost
+    if amount < 0 then amount = 0 end
+    self:emit_raw("self.reward",
+      { owner = c.owner, amount = amount, gap = gap, share = share, hint = c.hint })
   end
 
   if handled > 0 then
@@ -77,6 +115,7 @@ function Bus:emit(t, payload)
   else
     s.unhandled_streak = s.unhandled_streak + 1
   end
+  self._depth = self._depth - 1
   return handled
 end
 

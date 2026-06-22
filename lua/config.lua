@@ -49,6 +49,14 @@ return {
   safe_actions     = { "throttle", "notify", "model_downgrade", "model_upgrade" }, -- reversible verbs allowed at L4
   suggest_min_conf = 0.6,        -- min confidence to file an approval suggestion
   act_min_conf     = 0.85,       -- min confidence for autonomous (L4) action
+  -- evolved-organ actions (rule-DSL "act"): routed through the SAME ladder as the
+  -- reasoner but capped MORE conservatively — mutation-generated actuators are less
+  -- trusted, so by default their actions go to the APPROVAL inbox, never autonomous.
+  evolved_actions        = true,       -- allow rule organs to REQUEST actions at all
+  evolved_action_ceiling = "suggest",  -- cap: "suggest"=approval-gated (safe) · "act"=autonomous (still safe-listed+reversible only)
+  outcome_window         = 15,         -- ticks before judging an action's outcome (eligibility trace)
+  outcome_min_drop       = 5,          -- min cpu_avg drop vs baseline that counts as a success
+  outcome_max_reward     = 5,          -- cap on outcome credit per settled action
   curiosity        = 0.3,        -- 0 = passive · 1 = constantly explore the system
 
   -- model meta-evolution (Faz 4) — size the decision model to the host
@@ -139,6 +147,11 @@ return {
   purpose_learn         = true,  -- false (or --no-purpose-learn) = S1–S3 portfolio only
   purpose_prior         = 1e6,   -- optimistic payoff for untried goals (→ try each once)
   purpose_explore_every = 4,     -- every Nth split, probe the current gap regardless of payoff
+  -- horizontal gene transfer (#12): peers swap high-fitness genomes via colony/genepool/
+  hgt              = true,   -- publish my best genome + adopt clearly-better peer genomes
+  hgt_min_fitness  = 3,      -- don't publish a genome below this fitness
+  hgt_margin       = 2,      -- only adopt a peer genome this much fitter than my local best
+  hgt_every        = 6,      -- adopt at most once every N link cycles
   -- the next three are set at runtime by main.lua (bridged from globals → cfg so
   -- the sandboxed organ can read them); listed here for documentation only.
   colony_id            = nil,    -- this instance's colony id (root auto-generates; children get --colony-id)
@@ -154,11 +167,32 @@ return {
   -- evolutionary pressure
   need_threshold = 6,        -- unhandled stimulus streak that signals an unmet need
   mutate_chance  = 0.25,     -- chance per step to breed a variant of the fittest organ
+  es_sigma0      = 0.2,      -- ES: initial per-gene mutation step size (self-adapted thereafter)
+  es_tau         = 0.3,      -- ES: learning rate of the step size (log-normal sigma mutation)
   max_per_template = 3,      -- carrying capacity: max living variants of one species
   grace_ticks    = 25,       -- newborn protection before it can be culled
-  retire_floor   = 0.5,      -- fitness below this (post-grace) → retire
+  tournament_k   = 3,        -- breeding: k-tournament parent-selection sample size (1 = pure elitism)
+  cull_rate      = 0.5,      -- death: scales the probabilistic cull (0 = never die, 1 = aggressive)
+  crossover_chance = 0.15,   -- breeding: chance per step to recombine two parents (templates that support it)
+  mapelites_chance = 0.3,    -- breeding: chance per step to illuminate a random behavior cell (QD)
+  bandit_chance    = 0.15,   -- breeding: chance per step to invest in the highest-UCB template (#13)
+  bandit_c         = 1.5,    -- bandit exploration constant (higher = try under-sampled templates more)
+  rule_seed        = true,   -- seed one evolvable rule-DSL organ (open-ended GP population)
+  rule_max_rules   = 4,      -- bound a rule organ's genome size
+  retire_floor   = 0.5,      -- fitness floor: below 2× this, death probability rises toward 1
   decay_rate     = 0.03,     -- per-step fitness entropy
   error_penalty  = 1,
+
+  -- honest fitness — reward is DERIVED from observable bus facts, not from the
+  -- number an organ declares about itself (see core/bus.lua). Breaks reward-
+  -- hacking (e.g. the colony minting reward=4 each heartbeat) and the frequency
+  -- bias of constant per-fire reward.
+  reward_base        = 1,    -- base credit for handling a stimulus
+  reward_gap_cap     = 8,    -- max surprise multiplier (how starved the stimulus was)
+  reward_cost_weight = 0.5,  -- penalty per CPU-second the reactor burns (parsimony; 0 = off)
+  fitness_share      = true, -- split a stimulus's credit across its co-handlers (anti-redundancy)
+  metrics_log        = true, -- append per-generation evolution metrics to state/evolution.log
+  max_emit_depth     = 8,    -- bus re-entrancy cap: breaks runaway emit loops (e.g. chained rule organs)
 
   -- reporting
   report_flush = 12,         -- observations buffered before a report is written
