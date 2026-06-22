@@ -311,6 +311,33 @@ T["colony"] = {
       if split_n % 2 == 1 then return exp or exl else return exl or exp end
     end
 
+    -- VERTICAL GENE TRANSFER (#11): serialize a flat gene/sigma table to a Lua
+    -- literal, and find the parent's FITTEST living organ for the goal's template so
+    -- the child inherits TUNED genes (+ learned ES steps), not template defaults.
+    -- Best-effort: nil if the parent serves no organ of that template (e.g. an
+    -- explore-goal niche it doesn't occupy yet) → child starts fresh, as before.
+    local function ser_flat(t)
+      if not t then return "nil" end
+      local parts = {}
+      for k, v in pairs(t) do
+        local val = (type(v) == "string") and string.format("%q", v) or tostring(v)
+        parts[#parts + 1] = string.format("[%q]=%s", tostring(k), val)
+      end
+      return "{" .. table.concat(parts, ",") .. "}"
+    end
+    local function inherit_for(goal)
+      if not goal or goal == "" then return nil end
+      local tg  = cfg.template_goal or {}
+      local fit = (ctx.memory.data and ctx.memory.data.fitness) or {}
+      local bn, bs, bt = nil, -1e9, nil
+      for nm, rec in pairs(ctx.evolver.organs or {}) do
+        if tg[rec.template] == goal and (fit[nm] or 0) > bs then bn, bs, bt = nm, (fit[nm] or 0), rec.template end
+      end
+      if not bn then return nil end
+      local rec = ctx.evolver.organs[bn]
+      return bt, rec.genes, rec.sigma
+    end
+
     -- incoming messages from peers: log, report, reward. This reward is what
     -- keeps the comms organ "fit" so selection never retires it.
     ctx.bus:subscribe("colony.message", function(ev)
@@ -405,6 +432,12 @@ T["colony"] = {
             local chome = cdir .. "/children/" .. cid
             local prog  = cfg.prog or "evolua"
             local goal  = crystallize_goal()             -- the child's acquired purpose (or nil)
+            local itmpl, igenes, isigma = inherit_for(goal)   -- parent's best genes for that goal (#11)
+            if itmpl then
+              ensure_dir(chome)
+              write_file(chome .. "/inherited.lua", string.format(
+                "return { [%q] = { genes = %s, sigma = %s } }\n", itmpl, ser_flat(igenes), ser_flat(isigma)))
+            end
             local flags = " --colony-id " .. cid
               .. " --generation " .. tostring(gen() + 1)
               .. " --colony-root " .. shq(root())
@@ -427,6 +460,7 @@ T["colony"] = {
             if why.hot   then reasons[#reasons + 1] = "hot=" .. why.hot end
             local rtext = table.concat(reasons, " ")
             local ptext = goal and ("purpose: " .. goal .. (last_why ~= "" and (" [" .. last_why .. "]") or "")) or "generalist"
+            if itmpl then ptext = ptext .. " \u{21d3}genes:" .. itmpl end   -- inherited a tuned organ
             ctx.log:info("\27[35m⎘ [%s] splitting under load [%s] -> %s (gen %d) · %s\27[0m",
               SELF, rtext, cid, gen() + 1, ptext)
             ctx.report(SELF, string.format("CLONE %s — split [%s]; %s; colony was %d",

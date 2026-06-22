@@ -229,8 +229,14 @@ function Evolver:step()
     for key in pairs(goal_templates(cfg.goal)) do
       local tpl = Templates[key]
       if tpl and not self:serves(tpl.triggers) then
-        self.ctx.log:info("directive '%s' → growing <%s>", cfg.goal, key)
-        self:spawn(key)
+        local inh = cfg.inherited_genes and cfg.inherited_genes[key]   -- vertical transfer (#11)
+        if inh then
+          self.ctx.log:info("directive '%s' → growing <%s> with INHERITED genes", cfg.goal, key)
+          self:spawn(key, inh.genes, "inherited", inh.sigma)
+        else
+          self.ctx.log:info("directive '%s' → growing <%s>", cfg.goal, key)
+          self:spawn(key)
+        end
       end
     end
   end

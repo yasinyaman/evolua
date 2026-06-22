@@ -39,6 +39,21 @@ cfg.state_dir   = abs(cfg.state_dir)
 for i, d in ipairs(cfg.watch_dirs) do cfg.watch_dirs[i] = abs(d) end
 for i, f in ipairs(cfg.watch_logs) do cfg.watch_logs[i] = abs(f) end
 
+-- VERTICAL GENE TRANSFER (#11): a clone's parent colony writes <home>/inherited.lua
+-- with its best genes for the child's goal template. Load it onto cfg so the directed
+-- drive grows that organ PRE-TUNED instead of from template defaults.
+do
+  local fh = io.open(BASE .. "/inherited.lua", "r")
+  if fh then
+    local src = fh:read("*a"); fh:close()
+    local chunk = load(src, "inherited", "t", {})
+    if chunk then
+      local ok, t = pcall(chunk)
+      if ok and type(t) == "table" then cfg.inherited_genes = t end
+    end
+  end
+end
+
 -- ---- minimal flag parser -------------------------------------------------
 local function parse(args)
   local i = 1
