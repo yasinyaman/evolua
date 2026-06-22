@@ -13,6 +13,9 @@ progress and the file list, see `docs/BUILD-PLAN.md`. Summary:
 - **Phases 1–4 coded**, the Lua side verified over the bridge with real perception + timing.
 - **Phase 5 (colony / supervisor / goal acquisition / exploration)** added and verified with
   bounded runs (25/25 green — `docs/TESTING.md`). Deep-dive: **`docs/COLONY.md`**.
+- **Evolution engine enrichment** — honest fitness, MAP-Elites quality-diversity, rule-DSL/GP,
+  self-adaptive ES, vertical + horizontal gene transfer, bandit template selection, and
+  safety-gated actuators with outcome-credit (the section below).
 - **Rust side** (`main.rs`, `supervisor.rs`, `llm.rs`, `acquire.rs`) written to the proven mlua
   pattern and built/tested with a native `cargo build`.
 - Open items: live verification on a Windows VM, `gpu-dynamic` (`GGML_BACKEND_DL`).
@@ -43,6 +46,52 @@ progress and the file list, see `docs/BUILD-PLAN.md`. Summary:
   via the filesystem, surfaces them as `host.vitals`; never enforces (opt-in last-resort exit).
 
 Full design and diagrams: **`docs/COLONY.md`**. Verification: **`docs/TESTING.md`**.
+
+## Evolution engine enrichment
+
+> *Implemented.* The phases above grow capability; this layer enriches **how organs evolve** underneath them.
+> The evolver began as numeric-parameter tuning over fixed templates with a self-declared
+> reward — two poverties: a thin **search space** and a dishonest **fitness signal**. Both are
+> now addressed (branch `evolution-enrichment`, 5 commits; verified by bounded plain-Lua runs +
+> a focused harness for the safety-gated paths). All edits are to the selection *substrate*
+> (`bus` / `evolver` / `autonomy` / `evo_util` — the reward function and operators can't be an
+> evolvable organ without circularity); the rule grammar itself is a `templates.lua` blueprint.
+
+**Fitness signal** *(was: an organ's self-declared `reward=N`)*
+- **Honest fitness** — reward derived from observable bus facts: `base · gap / share − cost`,
+  where *gap* = how starved the stimulus was (need-filling), *share* = co-handlers (anti-
+  redundancy), *cost* = measured reactor CPU. Breaks reward-hacking (the colony minting reward
+  each heartbeat); the organ's declared number is demoted to telemetry.
+- **Outcome-credit (eligibility trace)** — when an action is taken on a world-model entity, the
+  requester is rewarded *only if the target's measured load later drops* — fakeproof; rewards
+  the world improving, not firing. (Strict corroboration / temporal credit.)
+- **Quality-Diversity (MAP-Elites)** — a behavior archive (cell = primary stimulus × subscription
+  breadth) keeps the best organ per niche; cell elites are cull-exempt and breeding *illuminates*
+  empty niches — a repertoire of competents, not one peak. Coverage logged to `evolution.log`.
+
+**Search space** *(was: fixed templates, numeric genes only)*
+- **Rule-DSL / genetic programming** — a `rule` organ's genome is a typed rule list
+  (`when <stimulus> if <field> <op> <value> then <report|log|emit|act>`); mutation rewrites
+  structure, crossover recombines. The grammar emits only safe primitives → capability-isolated
+  by construction (also resolves the sandbox concern — evolved structure can't reach `os`/`io`).
+- **Self-adaptive ES mutation** — per-gene log-normal step size (`sigma`), inherited; the kernel
+  lives once in `core/evo_util.lua`, shared by numeric genes and rule thresholds.
+
+**Selection & investment**
+- **Tournament selection + soft probabilistic death** — replaces elitist rank-1 breeding and
+  single-worst culling; seeded-infrastructure lineages (colony/supervisor/explorer) are protected.
+- **Bandit template selection** — a UCB bandit over templates (reward = average fitness,
+  optimistic prior) invests reproduction where it pays and tries each template once.
+
+**Two-timescale coupling** *(organ ↔ colony)*
+- **Vertical gene transfer** — a clone inherits its parent's best genes for its goal's template,
+  not just the goal, so colony adaptation compounds instead of restarting each generation.
+- **Horizontal gene transfer** — colony peers publish/adopt high-fitness flat genomes through a
+  shared `colony/genepool/`.
+
+**Safety.** Evolved organs can `act`, but only by *emitting a request* routed through the same
+autonomy ladder — capped to approval-gated by default (`evolved_action_ceiling`), with the
+grammar excluding destructive verbs (kill is not expressible).
 
 ## Fixed decisions
 

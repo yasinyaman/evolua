@@ -5,9 +5,10 @@
 EvoLua, deneysel ve tamamen bağımsız bir "dijital organizma"dır. Çalıştığı ortamı
 **algılar** (süreç-başına CPU/RAM, OS hata logları, dosya sistemi), varlık-bazlı bir
 **dünya modeli** kurar, durumu **anlamlandırır** (opsiyonel gömülü LLM + BM25 RAG, kural
-fallback), ve bir otonomi merdiveninde **hareket eder** — seçilim baskısı altında kendi
-eklentilerini ("organlar") büyütür, **haberleşen süreçlerden oluşan bir koloniye çoğalır**,
-yavrularına **amaç edindirir**, **ortamını keşfeder** ve geri rapor verir. Tek bir binary.
+fallback), ve bir otonomi merdiveninde **hareket eder** — gerçek bir **genetik sistemle**
+(tipli-kural genomları, dürüst fitness, çeşitlilik) kendi eklentilerini ("organlar") büyütür,
+**haberleşen süreçlerden oluşan bir koloniye çoğalır**, yavrularına **amaç edindirir**,
+**ortamını keşfeder** ve geri rapor verir. Tek bir binary.
 
 > **Her şeyi şekillendiren çekirdek fikir:** Rust host hiç değişmez ve `lua/core/` değişmez
 > bir sözleşmedir. Yeni yetenek *her zaman* yeni bir `.lua` dosyasıdır — asla çekirdek
@@ -119,6 +120,32 @@ varsayılan kapalı** (`EVOLUA_WATCHDOG_KILL=1`).
 
 ---
 
+## Evrim motoru — organlar gerçekte nasıl evrilir
+
+Fazların altında, evolver artık sabit şablonlar üzerinde sayısal-parametre ayarlayıcısı
+değil — gerçek bir genetik sistem. (Tasarım + doğrulama: [docs/ROADMAP.md](docs/ROADMAP.md#evolution-engine-enrichment).)
+
+| Mekanizma | Ne yapar |
+|---|---|
+| **Dürüst fitness** | ödül, organın *beyan ettiği* sayıdan değil *gözlemlenebilir bus olgularından* türetilir — aç bir uyaranı doldurma (sürpriz) ÷ ortak-işleyenler (fazlalık paylaşımı) − ölçülen maliyet. Reward-hacking'i kırar (örn. koloninin her heartbeat'te kendine ödül basması). |
+| **Turnuva + yumuşak ölüm** | k-turnuva üreme (yalnız en fit değil) + olasılıksal eleme çeşitliliği korur; tohumlanan altyapı soyları (colony/supervisor/explorer) elemeden muaf. |
+| **Rule-DSL / genetik programlama** | bir `rule` organının genomu tipli kural listesidir — `when <stimulus> if <field> <op> <value> then <report\|log\|emit\|act>`. Mutasyon yapıyı yeniden yazar, crossover iki ebeveyni birleştirir. Gramer **yalnız güvenli primitifler** üretir (`os`/`io` yok) → yapısal **capability-isolation**. |
+| **Quality-Diversity (MAP-Elites)** | davranış arşivi her niş için en iyi organı tutar (birincil uyaran × abonelik genişliği); hücre elitleri korunur, üreme boş nişleri *aydınlatır* — tek tepe yerine **yetkinler repertuarı**. |
+| **Öz-uyarlanan (ES) mutasyon** | her sayısal gen kendi log-normal mute edilen adım boyunu (`sigma`) taşır, nesiller boyu kalıtılır. |
+| **Güvenlik-gated aktüatör + outcome-credit** | bir `rule` organı `act` edebilir — ama yalnız *istek yayar*; core autonomy merdiveni karar verir, evrilen organlar için **varsayılan onay-kapılı** (bu kopyada asla otonom). Aksiyon sonrası organ, ancak hedefin ölçülen yükü gerçekten düşerse ödüllenir — taklit edilemez eligibility-trace. |
+| **Gen transferi** | **dikey** — klon, hedef şablonu için ebeveynin en iyi ayarlı genlerini miras alır; **yatay** — koloni eşleri paylaşılan gen havuzu üzerinden yüksek-fitness genom takas eder. |
+| **Bandit şablon seçimi** | UCB banditi ödeme yapan şablonlara üreme yatırır, her birini bir kez dener (optimist önsel) — reaktif ihtiyaç-sürücüsünün ötesinde proaktif keşif. |
+
+İki dosya dinamiği görünür kılar: **`state/evolution.log`** (jenerasyon başı TSV — popülasyon,
+mean/max/min/stddev fitness, tür sayısı, MAP-Elites kapsamı, fallback oranı) ve
+**`state/repertoire.txt`** (güncel QD haritası — hücre başına en iyi organ).
+
+Bunlar `lua/core/`'a yapılan ender ama haklı düzenlemelerdir (ödül fonksiyonu, seçilim döngüsü,
+varyasyon operatörleri ve QD arşivi seçilimin *alt-katmanıdır* — döngüsellik olmadan evrilebilir
+bir organ olamazlar). Kural grameri ise `templates.lua`'da (blueprint katmanı) yaşar.
+
+---
+
 ## Mimari
 
 `src/main.rs` ince bir kabuktur: `lua/`'yu `rust-embed` ile gömer, her modülü
@@ -132,8 +159,9 @@ varsayılan kapalı** (`EVOLUA_WATCHDOG_KILL=1`).
 | `src/llm.rs` · `src/acquire.rs` | gömülü karar beyni · model indirme |
 | `lua/core/kernel.lua` | yaşam döngüsü / tick loop; ödül-ceza → fitness |
 | `lua/core/bus.lua` | event bus — sinir sistemi |
-| `lua/core/templates.lua` | **genom blueprint'leri**; `colony`, `supervisor`, `explorer` dahil |
-| `lua/core/evolver.lua` | evrim motoru: ihtiyaç→üretim, mutasyon, seçilim |
+| `lua/core/templates.lua` | **genom blueprint'leri**; **rule-DSL/GP** organı + `colony`, `supervisor`, `explorer` |
+| `lua/core/evolver.lua` | evrim motoru: ihtiyaç/hedef/**bandit** üretim, **turnuva** + yumuşak ölüm, **MAP-Elites**, **ES** mutasyon, **crossover** |
+| `lua/core/evo_util.lua` | paylaşılan evrim operatörleri (gauss + öz-uyarlanan ES adımı) |
 | `lua/core/{worldmodel,reasoner,rag,autonomy,hostcaps,modelmgr,platform,reporter}.lua` | dünya modeli · anlamlandırma · RAG · otonomi · host probu · model merdiveni · OS soyutlaması · raporlayıcı |
 | `lua/sensors/*.lua` | `sys_metrics`, `logwatch`, `fswatch`, `introspect`, `proc_top`, `proc_errors`, `curiosity` |
 | `lua/config.lua` · `lua/main.lua` | içgüdüler (sayılar) · giriş noktası/CLI/tohumlama |
@@ -155,9 +183,11 @@ varsayılan kapalı** (`EVOLUA_WATCHDOG_KILL=1`).
 plugins/    organizmanın yazdığı organlar (gen_*.lua)
 reports/    zaman damgalı Markdown raporlar
 state/      memory.lua · evolua.log · audit.log · heartbeat · vitals · supervisor.log
+            evolution.log (jenerasyon metrikleri) · repertoire.txt (MAP-Elites QD haritası)
 approvals/  pending-*.md → (sen) approved/ → done/
 models/     indirilen modeller + current_tier
-colony/     peers/<id> · inbox/<id>/ · clone.lock · children/<id>/
+colony/     peers/<id> · inbox/<id>/ · clone.lock · genepool/ (yatay gen transferi)
+            children/<id>/ (klon alt-evleri; inherited.lua = dikey gen transferi)
             lineage.log (amaç defteri) · outcomes/<id> (S4 ödül hasadı)
 ```
 
@@ -180,7 +210,7 @@ colony/     peers/<id> · inbox/<id>/ · clone.lock · children/<id>/
 --clone-generalist         klonlar generic kopya (amaç kristalleşmesini atla)
 --purpose-mode <m>         amaç seçimi: explore|exploit|portfolio
 --no-purpose-learn         S4'ü kapat (amaçları ödüle göre yanlamayı bırak)
---no-colony / --no-supervisor / --no-explorer    ilgili organı tohumlama
+--no-colony / --no-supervisor / --no-explorer / --no-rule   ilgili organı tohumlama
 --explore-root <path>      explorer'ın dolaşacağı bir dizin ekle (tekrarlanabilir)
 ```
 
@@ -198,8 +228,10 @@ Süpervizör env: `EVOLUA_WATCHDOG` (0=kapalı), `_SECS`, `_STALL`, `_KILL` (opt
 | **L3 öner** | `approvals/pending-*` yaz, bekle | güven orta+ |
 | **L4 müdahale** | otonom aksiyon (yalnız geri-alınabilir + güvenli-liste) | güven ≥ eşik **ve** tavan ≥ L4 |
 
-`autonomy_ceiling` merdiveni keser. Yıkıcı aksiyonlar (kill) **her zaman** onay ister. Onay
-bir dosya dansıdır. Her karar/aksiyon `state/audit.log`'a yazılır.
+`autonomy_ceiling` merdiveni keser. Yıkıcı aksiyonlar (kill) **her zaman** onay ister.
+**Evrilen organlar** (rule-DSL `act`) daha da muhafazakâr sınırlanır — `evolved_action_ceiling`
+varsayılanı `suggest`, yani istekleri global tavandan bağımsız olarak onay kutusuna gider, asla
+otonom değil. Onay bir dosya dansıdır. Her karar/aksiyon `state/audit.log`'a yazılır.
 
 > ⚠️ Bu çalışma kopyası **gözetimsiz** ayarlı gelir (`autonomy_ceiling = "act"`). Güvenli
 > varsayılan için `autonomy_ceiling = "report"`.

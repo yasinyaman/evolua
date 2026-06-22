@@ -9,7 +9,8 @@ Bu, tek bir sınırlı koşunun **gerçek, düzenlenmemiş** çıktısıdır —
 cargo build --release
 EVOLUA_WATCHDOG_SECS=2 ./target/release/evolua \
   --ticks 160 --tick-seconds 0.2 --clone --clone-ignore-battery
-# sonra yazdırdığı veri evini incele (ya da EVOLUA_HOME=/tmp/evolua-demo ver)
+# sonra veri evini incele — özellikle state/evolution.log + state/repertoire.txt
+# (ya da EVOLUA_HOME=/tmp/evolua-demo ver)
 ```
 
 > `--clone` kendini çoğaltmayı açar; `--clone-ignore-battery` pildeki bir dizüstünde de
@@ -60,14 +61,58 @@ baskı OS hata loglarıydı):
 | Sandbox  |   0 |        0 |     29 |           0 |   →   |      435 |
 ```
 
-## 3. Evrim — hissettiği baskıya organ büyüttü
+## 3. Evrim motoru — sayısal ayar değil, gerçek bir genetik sistem
 
-Hatalar baskın olduğu için evrici/reasoner birkaç `error_reporter` organı büyüttü (seçilim
-altında — indekslerin kesintili olmasına dikkat: zayıf olanlar emekliye ayrıldı):
+Hatalar baskın olduğu için evolver birkaç `error_reporter` organı büyüttü (seçilim altında —
+zayıflar emekliye ayrıldı). Ama motor tek şablonu ayarlamaktan fazlasını yapar: **dürüst
+fitness** aç bir uyaranı doldurmayı ödüllendirir (organın beyan ettiği sayıyı değil),
+**MAP-Elites** çeşitli bir repertuar tutar, ve bir **UCB bandit** reaktif ihtiyaç-sürücüsünün
+asla denemeyeceği şablonları proaktif dener.
+
+**Jenerasyon başı metrikler** (`state/evolution.log`) — popülasyon, fitness dağılımı, tür
+sayısı, MAP-Elites kapsamı — repertuar zamanla dolarken:
 
 ```
-gen_error_reporter_1  gen_error_reporter_2  gen_error_reporter_3  gen_error_reporter_8
+tick  gen  pop  mean     max      min    stddev  species  cells
+3     4    4    1.750    4.000    1.000  1.299   4        4
+39    12   12   21.895   217.063  0.737  58.931  6        6
+93    18   17   15.166   142.496  0.833  32.251  9        8
 ```
+
+**MAP-Elites repertuarı** (`state/repertoire.txt`) — her davranış nişi için tutulan en iyi
+organ. `metric.cpu/load/mem` guard'larına dikkat: bu sensörler **macOS'ta sessiz**, reaktif yol
+onları asla büyütmez — yalnız **bandit** her şablonu bir kez denediği için varlar ve MAP-Elites
+onları **düşük-fitness ama benzersiz elit** olarak korur (skaler seçilim onları elerdi):
+
+```
+# MAP-Elites repertoire — 9 cells filled
+colony.message#2     gen_colony_1          2.43
+env.discovery#2      gen_explorer_1        4.97
+fs.change#1          gen_fs_journal_2      5.79
+host.vitals#2        gen_supervisor_1     14.55
+log.error#1          gen_error_reporter_1 134.77   ← bu host'ta baskın niş
+metric.cpu#1         gen_cpu_guard_1       0.53    ┐ bandit keşfetti; macOS'ta hiç ateşlemez,
+metric.load#1        gen_load_guard_1      0.89    │ yine de çeşitlilik repertuarında tutulur
+metric.mem#1         gen_mem_guard_1       0.60    ┘
+self.heartbeat#1     gen_rule_2           12.48
+```
+
+**Evrilen bir rule-DSL organı** — genomu tipli kural listesi, *yalnız* güvenli primitiflere
+render edilir (`os`/`io` yok; yapısal capability-isolation):
+
+```lua
+ctx.bus:subscribe("self.heartbeat", function(ev)
+  local d = ev.data or {}
+  if (tonumber(d["tick"]) or 0) >= 10 then
+    ctx.report(SELF, "rule 1 on self.heartbeat"); return { handled = true, reward = 1 }
+  end
+  return false
+end, SELF)
+```
+
+Mutasyon bu kuralın stimulus / field / operatör / eşik / aksiyonunu değiştirebilir (kural
+ekleyip silebilir); crossover iki ebeveyni birleştirir — böylece tek bir `rule` şablonu seçilim
+altında birçok ayrı davranışa farklılaşır.
 
 ## 4. Ortam keşfi — host'u tarar ve kendi duyularını büyütür
 

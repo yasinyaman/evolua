@@ -9,7 +9,8 @@ organism actually does without running it. Reproduce it with:
 cargo build --release
 EVOLUA_WATCHDOG_SECS=2 ./target/release/evolua \
   --ticks 160 --tick-seconds 0.2 --clone --clone-ignore-battery
-# then inspect the data home it printed (or set EVOLUA_HOME=/tmp/evolua-demo)
+# then inspect the data home it printed — especially state/evolution.log + state/repertoire.txt
+# (or set EVOLUA_HOME=/tmp/evolua-demo)
 ```
 
 > `--clone` enables self-replication; `--clone-ignore-battery` lets it spawn on a laptop on
@@ -60,14 +61,58 @@ By tick 160 it had grown to generation 9 / 9 organs and wrote situational report
 | Sandbox  |   0 |        0 |     29 |           0 |   →   |      435 |
 ```
 
-## 3. Evolution — it grew organs for the pressure it felt
+## 3. Evolution engine — a real genetic system, not numeric tuning
 
-Because errors dominated, the evolver/reasoner grew several `error_reporter` organs (under
-selection — note non-contiguous indices, the weak ones were retired):
+Because errors dominated, the evolver grew several `error_reporter` organs (under selection —
+weak ones retired). But the engine does far more than tune one template: **honest fitness**
+rewards filling a starved stimulus (not an organ's self-declared number), **MAP-Elites** keeps a
+diverse repertoire, and a **UCB bandit** proactively tries templates the reactive need-drive
+never would.
+
+**Per-generation metrics** (`state/evolution.log`) — population, fitness spread, distinct
+species, MAP-Elites coverage — the repertoire filling over time:
 
 ```
-gen_error_reporter_1  gen_error_reporter_2  gen_error_reporter_3  gen_error_reporter_8
+tick  gen  pop  mean     max      min    stddev  species  cells
+3     4    4    1.750    4.000    1.000  1.299   4        4
+39    12   12   21.895   217.063  0.737  58.931  6        6
+93    18   17   15.166   142.496  0.833  32.251  9        8
 ```
+
+**The MAP-Elites repertoire** (`state/repertoire.txt`) — the best organ kept per behavior niche.
+Note the `metric.cpu/load/mem` guards: those sensors are **silent on macOS**, so the reactive
+drive never grows them — they exist only because the **bandit** tried each template once, and
+MAP-Elites **preserves them as low-fitness-but-unique elites** (scalar selection would cull them):
+
+```
+# MAP-Elites repertoire — 9 cells filled
+colony.message#2     gen_colony_1          2.43
+env.discovery#2      gen_explorer_1        4.97
+fs.change#1          gen_fs_journal_2      5.79
+host.vitals#2        gen_supervisor_1     14.55
+log.error#1          gen_error_reporter_1 134.77   ← the dominant niche on this host
+metric.cpu#1         gen_cpu_guard_1       0.53    ┐ bandit-explored; never fires on macOS,
+metric.load#1        gen_load_guard_1      0.89    │ yet kept as a diverse repertoire entry
+metric.mem#1         gen_mem_guard_1       0.60    ┘
+self.heartbeat#1     gen_rule_2           12.48
+```
+
+**An evolved rule-DSL organ** — its genome is a typed rule list rendered into *only* safe
+primitives (no `os`/`io`; capability-isolated by construction):
+
+```lua
+ctx.bus:subscribe("self.heartbeat", function(ev)
+  local d = ev.data or {}
+  if (tonumber(d["tick"]) or 0) >= 10 then
+    ctx.report(SELF, "rule 1 on self.heartbeat"); return { handled = true, reward = 1 }
+  end
+  return false
+end, SELF)
+```
+
+Mutation can flip this rule's stimulus / field / operator / threshold / action (and add or
+remove rules); crossover recombines two parents — so one `rule` template differentiates into
+many distinct behaviors under selection.
 
 ## 4. Environment exploration — it scouts the host and grows its own senses
 
