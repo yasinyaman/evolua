@@ -49,6 +49,14 @@ return {
   safe_actions     = { "throttle", "notify", "model_downgrade", "model_upgrade" }, -- reversible verbs allowed at L4
   suggest_min_conf = 0.6,        -- min confidence to file an approval suggestion
   act_min_conf     = 0.85,       -- min confidence for autonomous (L4) action
+  -- evolved-organ actions (rule-DSL "act"): routed through the SAME ladder as the
+  -- reasoner but capped MORE conservatively — mutation-generated actuators are less
+  -- trusted, so by default their actions go to the APPROVAL inbox, never autonomous.
+  evolved_actions        = true,       -- allow rule organs to REQUEST actions at all
+  evolved_action_ceiling = "suggest",  -- cap: "suggest"=approval-gated (safe) · "act"=autonomous (still safe-listed+reversible only)
+  outcome_window         = 15,         -- ticks before judging an action's outcome (eligibility trace)
+  outcome_min_drop       = 5,          -- min cpu_avg drop vs baseline that counts as a success
+  outcome_max_reward     = 5,          -- cap on outcome credit per settled action
   curiosity        = 0.3,        -- 0 = passive · 1 = constantly explore the system
 
   -- model meta-evolution (Faz 4) — size the decision model to the host

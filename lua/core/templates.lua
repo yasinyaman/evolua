@@ -702,14 +702,16 @@ RULE.stimulus_fields = {
 RULE.stimuli = {}
 for s in pairs(RULE.stimulus_fields) do RULE.stimuli[#RULE.stimuli + 1] = s end
 RULE.ops     = { ">=", "<=", ">", "<", "==", "~=" }
-RULE.actions = { "report", "log", "emit" }   -- every action has an OBSERVABLE effect
-                                             -- (no "reward-only" no-op, which honest
-                                             -- fitness could not police)
+RULE.actions = { "report", "log", "emit", "act" }   -- every action has an OBSERVABLE effect.
+                                             -- "act" REQUESTS a host action via the autonomy
+                                             -- ladder — it NEVER executes directly (see below).
 RULE.emits   = { "alert.cpu", "alert.mem", "alert.load", "alert.proc", "alert.fs", "alert.generic" }
+RULE.act_verbs = { "throttle", "restore", "notify" }   -- SAFE, reversible verbs ONLY — never "kill"
 
-local OPSET, EMITSET = {}, {}
-for _, o in ipairs(RULE.ops)   do OPSET[o]   = true end
-for _, e in ipairs(RULE.emits) do EMITSET[e] = true end
+local OPSET, EMITSET, ACTSET = {}, {}, {}
+for _, o in ipairs(RULE.ops)       do OPSET[o]  = true end
+for _, e in ipairs(RULE.emits)     do EMITSET[e] = true end
+for _, v in ipairs(RULE.act_verbs) do ACTSET[v] = true end
 local function rand_pick(t) return t[math.random(#t)] end
 
 local function random_rule(stimulus)
@@ -719,6 +721,7 @@ local function random_rule(stimulus)
     r.field, r.op, r.value = rand_pick(fields), rand_pick(RULE.ops), math.random(1, 100)
   end                                               -- else: fires whenever stimulus does
   if r.action == "emit" then r.emit = rand_pick(RULE.emits) end
+  if r.action == "act"  then r.verb = rand_pick(RULE.act_verbs) end
   r.reward = math.random(1, 3)                       -- telemetry hint (honest fitness ignores it)
   return r
 end
@@ -752,6 +755,13 @@ local function render_rules(name, genes)
       end
     elseif r.action == "log" then
       act = 'ctx.log:info("[%s] rule fired", SELF)'
+    elseif r.action == "act" then
+      -- REQUEST a host action (never execute): emit action.request; core autonomy
+      -- ladder decides act/approve/refuse. Verb whitelisted to safe reversible ones.
+      local verb = ACTSET[r.verb] and r.verb or "notify"
+      act = 'ctx.bus:emit("action.request", { from = SELF, verb = ' .. q(verb) ..
+        ', entity = tostring(d["name"] or "?"), pid = tonumber(d["pid"]), confidence = 0.75, reason = ' ..
+        q("rule " .. i .. " " .. verb .. " on " .. stim) .. ' })'
     else -- report
       act = "ctx.report(SELF, " .. q("rule " .. i .. " on " .. stim) .. ")"
     end
@@ -793,6 +803,7 @@ local function mutate_rule_genes(g, cfg)
     local r = rules[math.random(#rules)]
     r.action = rand_pick(RULE.actions)
     if r.action == "emit" and not r.emit then r.emit = rand_pick(RULE.emits) end
+    if r.action == "act"  and not r.verb then r.verb = rand_pick(RULE.act_verbs) end
   else                                             -- DIFFERENTIATE: jump to a new niche
     g.stimulus = rand_pick(RULE.stimuli)
     local fields = RULE.stimulus_fields[g.stimulus] or {}
