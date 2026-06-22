@@ -3,6 +3,8 @@
 -- it exposes, and how to render itself into a standalone plugin .lua file.
 -- New capabilities are BORN here as source code, not hand-written.
 
+local EU = require("core.evo_util")   -- shared ES kernel (es_step) for rule thresholds
+
 local function literal(genes)
   -- render a flat genes table as a Lua literal
   local parts = {}
@@ -784,12 +786,9 @@ local function mutate_rule_genes(g, cfg)
   local maxr = (cfg and cfg.rule_max_rules) or 4
   local rules = g.rules
   local kind = math.random(7)
-  if kind == 1 and #rules > 0 then                 -- perturb a threshold
+  if kind == 1 and #rules > 0 then                 -- perturb a threshold (self-adaptive ES)
     local r = rules[math.random(#rules)]
-    if r.value then
-      local jit = (math.random() * 0.5 + 0.05) * (math.random() < 0.5 and -1 or 1)
-      r.value = math.max(1, math.floor(r.value * (1 + jit) + 0.5))
-    end
+    if r.value then r.value, r.vsigma = EU.es_step(r.value, r.vsigma, cfg) end
   elseif kind == 2 and #rules > 0 then             -- flip the operator
     rules[math.random(#rules)].op = rand_pick(RULE.ops)
   elseif kind == 3 and #rules > 0 then             -- watch a different field

@@ -4,6 +4,7 @@
 -- organs, mutates promising ones, retires the unfit. Genetic, not scripted.
 
 local Templates = require("core.templates")
+local EU        = require("core.evo_util")   -- shared ES kernel (gauss, es_step)
 
 local Evolver = {}
 Evolver.__index = Evolver
@@ -14,12 +15,6 @@ function Evolver.new(ctx)
     organs = {},     -- generated name -> { template=, genes=, born_tick= }
     naming = {},     -- template -> count (for unique names)
   }, Evolver)
-end
-
--- Box–Muller standard normal (stock Lua has no gaussian) — for ES mutation steps
-local function gauss()
-  local u1 = math.random(); if u1 < 1e-12 then u1 = 1e-12 end
-  return math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * math.random())
 end
 
 -- recursive copy so a spawned organ never aliases a template's default_genes
@@ -90,16 +85,11 @@ function Evolver:mutate(name)
     -- Each numeric gene carries a learned step size (sigma). Mutate the step
     -- log-normally, then perturb the gene log-normally by it — so the lineage
     -- LEARNS how far to mutate each gene (good step sizes are inherited).
-    local cfg = self.ctx.cfg
-    local tau, psig = cfg.es_tau or 0.3, rec.sigma or {}
+    local cfg, psig = self.ctx.cfg, rec.sigma or {}
     g, sig = {}, {}
     for k, v in pairs(rec.genes) do
       if type(v) == "number" then
-        local s = (psig[k] or cfg.es_sigma0 or 0.2) * math.exp(tau * gauss())
-        s = math.max(0.01, math.min(2, s))           -- clamp the learned step
-        sig[k] = s
-        local factor = math.max(0.25, math.min(4, math.exp(s * gauss())))  -- bound a single step
-        g[k] = math.max(1, math.floor(v * factor + 0.5))
+        g[k], sig[k] = EU.es_step(v, psig[k], cfg)   -- self-adaptive log-normal step
       else
         g[k] = v
       end
