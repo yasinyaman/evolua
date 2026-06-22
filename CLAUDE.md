@@ -131,23 +131,42 @@ sensor's `sense(ctx)`; (2) **evolve** (`evolve_every`); (3) **persist/housekeep*
 ### Event bus = nervous system (`lua/core/bus.lua`)
 
 Sensors `emit` stimuli; plugins `subscribe` and react. A reactor returns `true` or
-`{handled=true, reward=N}` to claim a stimulus — that emits `self.reward`; a throwing reactor
-emits `self.error`. The kernel turns reward/error into fitness deltas (the selective force).
-The bus tracks per-event-type `unhandled_streak`, which is exactly the signal the evolver reads
-to detect an *unmet need*.
+`{handled=true, reward=N}` to claim a stimulus. The bus does **not** trust that `N` for fitness
+— it derives an **honest reward** from observable facts (`base · gap / share − cost`:
+need-filling × anti-redundancy sharing − measured reactor CPU time) and emits *that* as
+`self.reward`; the declared `N` is kept only as telemetry. This is what breaks reward-hacking
+(e.g. the colony minting `reward=4` each heartbeat). A throwing reactor emits `self.error`. The
+kernel turns reward/error into fitness deltas (the selective force). The bus tracks per-event-type
+`unhandled_streak` (the *unmet-need* signal the evolver reads) and caps emit re-entrancy
+(`max_emit_depth`) so chained organ emits can't recurse into a stack overflow.
 
-### Evolution (`lua/core/evolver.lua` + `lua/core/templates.lua`)
+### Evolution (`lua/core/evolver.lua` + `lua/core/templates.lua` + `lua/core/evo_util.lua`)
 
-`templates.lua` holds **genome blueprints**: each template declares which stimulus it
-`triggers` on, its tunable `genes`, `goal_keywords` for directed mode, and a `build(name,genes)`
-that *renders the organ's source code as a string*. The evolver's `step()`:
-1. **directed drive** — grow organs whose `goal_keywords` match the goal;
+`templates.lua` holds **genome blueprints**: each template declares its `triggers` stimulus,
+tunable `genes`, `goal_keywords`, an optional `protected` flag (cull-exempt seeded
+infrastructure), optional `mutate_genes`/`crossover_genes` operators (structural variation), and
+a `build(name, genes)` that *renders the organ's source as a string*. The headline blueprint is
+the **rule-DSL/GP** organ (`rule`): a genome of typed rules
+(`when <stimulus> if <field> <op> <value> then <report|log|emit|act>`) rendered into **only safe
+primitives** — capability-isolated by construction (so structure evolves while staying sandboxed).
+The evolver's `step()`:
+1. **directed drive** — grow organs whose `goal_keywords` match the goal, using a clone's
+   inherited genes (`cfg.inherited_genes` — vertical gene transfer) when present;
 2. **free drive** — when an event's `unhandled_streak ≥ need_threshold`, `spawn()` a template
-   that triggers on it (writes a `gen_*.lua` file and loads it);
-3. **selection** — rank living organs by fitness; `mutate()` the fittest (clone with perturbed
-   numeric genes, bounded by `max_per_template` carrying capacity); retire the worst once past
-   `grace_ticks` if below `retire_floor`;
-4. **entropy** — decay idle fitness so selection stays honest.
+   that triggers on it;
+3. **MAP-Elites archive** — `update_archive()` keeps the best living organ per behavior cell
+   (primary stimulus × subscription breadth), dumped to `state/repertoire.txt`; cell elites are
+   exempt from culling;
+4. **selection** — build `ranked`, then: breed via **k-tournament** (not just rank-1) through
+   `mutate()` (template-defined structural mutation for rule organs, else **self-adaptive ES**
+   numeric perturbation via `evo_util.es_step` — each gene carries an inherited `sigma`);
+   **crossover** two tournament parents; a **bandit drive** invests in the highest-UCB template
+   (`bandit_pick`, optimistic prior tries each once); **soft probabilistic death** culls organs
+   below `2×retire_floor` (protected and cell-elite lineages exempt);
+5. **entropy** — decay idle fitness; per-generation metrics appended to `state/evolution.log`.
+
+Fitness itself is honest (see the bus); organs can `act` via the safety-gated actuator path (see
+Autonomy); the `colony` organ adds vertical + horizontal gene transfer.
 
 ### Plugins / organs (`lua/core/registry.lua`)
 
@@ -172,7 +191,13 @@ philosophy) that's isolated enough not to clobber core globals, wires its subscr
   on its own, including **downloading a better decision model without approval**. Set
   `autonomy_ceiling = "report"` for the safe default. Destructive actions (kill) *always*
   require approval; reversible safe-listed verbs (throttle, model_downgrade, model_upgrade)
-  can act at L4 above `act_min_conf`. Approval is a file dance:
+  can act at L4 above `act_min_conf`. **Evolved organs** (rule-DSL `act`) never execute — they
+  *emit* an `action.request` that `Autonomy:request` routes through this same ladder but capped
+  by `evolved_action_ceiling` (default `suggest` → approval inbox, never autonomous, whatever the
+  global ceiling; kill is not even expressible in the grammar). A successful action earns
+  **outcome-credit**: `settle_outcomes()` rewards the requesting organ only if the target's
+  world-model load actually drops within `outcome_window` (a fakeproof eligibility trace).
+  Approval is a file dance:
   `approvals/pending-<id>.md` → move to `approved/` to apply (archived to `done/`), delete to
   reject. Every decision/action is appended to `state/audit.log`.
 - `lua/core/modelmgr.lua` + `lua/core/hostcaps.lua` — meta-evolution: probe RAM/cores/disk/power,

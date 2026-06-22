@@ -147,6 +147,35 @@ still probing for new niches. `--no-purpose-learn` reverts to the S1–S3 portfo
 > Outcome files accumulate one per child. For long-running colonies this would be consolidated
 > and pruned; for bounded runs the root simply aggregates them all.
 
+## 3b. Gene transfer — clones inherit, peers share
+
+Goal acquisition tells a child *what to become*; gene transfer gives it a **head start** and lets
+good solutions **spread**, coupling the per-organ and colony timescales that were otherwise
+disconnected (each clone used to re-evolve its niche from scratch).
+
+### Vertical gene transfer — a clone inherits its parent's tuned genes
+
+At split, alongside crystallizing the goal, the colony finds the parent's **fittest living organ**
+whose template maps to that goal (via `template_goal`) and serializes its genes + learned ES step
+sizes to `colony/children/<cid>/inherited.lua`. The child's `main.lua` loads that onto
+`cfg.inherited_genes`, and the evolver's directed drive grows the goal's organ **pre-tuned** with
+those genes instead of template defaults (lineage `inherited`, logged "growing `<X>` with INHERITED
+genes"). It pairs naturally with **exploit** crystallization — the goal *is* the best organ's niche,
+so the genes always exist; for an **explore** goal the parent has no such organ and the child simply
+starts fresh. So an aimless root differentiates offspring that **build on** what it learned, not
+restart — colony adaptation compounds across generations.
+
+### Horizontal gene transfer (HGT) — peers infect siblings with good alleles
+
+Each link cycle a member publishes its fittest flat-genome organ to a shared
+`colony/genepool/<template>` (only if it beats the entry already there). Every `hgt_every` cycles
+it **adopts** one peer genome that clearly beats its own local best for that template (by
+`hgt_margin`, respecting the per-template carrying cap) — spawning an organ from it (lineage `hgt`).
+A great `cpu_guard` that peer A evolved thus spreads to its siblings. Only **flat-numeric** genomes
+transfer through the pool; a rule organ's structural genome stays local. The pool uses the same
+filesystem file-dance as peers/outcomes (and a `load`-free line format, since the organ sandbox has
+no `load`). Tunables: `hgt`, `hgt_min_fitness`, `hgt_margin`, `hgt_every`.
+
 ## 4. The host-side supervisor (the "brainstem")
 
 The one deliberate exception to "all behavior lives in Lua": a background thread the Rust host

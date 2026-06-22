@@ -6,9 +6,9 @@ EvoLua is an experimental, self-contained "digital organism." It **perceives** i
 environment (per-process CPU/RAM, OS error logs, the filesystem), builds an entity-based
 **world model**, **makes sense** of the situation (optional embedded LLM + BM25 RAG, with a
 rule-based fallback), and **acts** within an autonomy ladder — growing its own plugins
-("organs") under selection pressure, **replicating into a colony** of communicating
-processes, **acquiring purpose** for its offspring, and reporting back. It ships as a single
-self-contained binary.
+("organs") under a genuine **genetic system** (typed-rule genomes, honest fitness,
+quality-diversity), **replicating into a colony** of communicating processes, **acquiring
+purpose** for its offspring, and reporting back. It ships as a single self-contained binary.
 
 > **The core insight that shapes everything:** the Rust host never changes, and `lua/core/`
 > is an immutable contract. New capability is *always* a new `.lua` file — never an edit to
@@ -167,6 +167,34 @@ kills, or steers evolution. The single hard reflex (process exit on a prolonged 
 
 ---
 
+## Evolution engine — how organs actually evolve
+
+Underneath the phases, the evolver is no longer a numeric-parameter tuner over fixed
+templates — it is a genuine genetic system. (Design rationale + verification:
+[docs/ROADMAP.md](docs/ROADMAP.md#evolution-engine-enrichment).)
+
+| Mechanism | What it does |
+|---|---|
+| **Honest fitness** | reward is derived from *observable bus facts* — filling a starved stimulus (surprise) ÷ co-handlers (anti-redundancy sharing) − measured cost (parsimony) — **not** the number an organ declares about itself. Breaks reward-hacking (e.g. the colony minting its own reward each heartbeat). |
+| **Tournament + soft death** | k-tournament breeding (not just the single fittest) and probabilistic culling preserve diversity; seeded-infrastructure lineages (colony/supervisor/explorer) are exempt from culling. |
+| **Rule-DSL / genetic programming** | a `rule` organ's genome is a typed rule list — `when <stimulus> if <field> <op> <value> then <report\|log\|emit\|act>`. Mutation rewrites the stimulus/field/op/value/action and adds/removes rules; crossover recombines two parents. The grammar emits **only safe primitives** (no `os`/`io`) — structurally **capability-isolated**, so structure can evolve while staying safe. |
+| **Quality-Diversity (MAP-Elites)** | a behavior archive keeps the best organ per niche (primary stimulus × subscription breadth); cell elites are protected and breeding can *illuminate* empty niches — a **repertoire of competents**, not convergence onto one peak. |
+| **Self-adaptive (ES) mutation** | each numeric gene carries its own log-normally-mutated step size (`sigma`), inherited across generations — the lineage learns *how much* to mutate each gene. |
+| **Safety-gated actuators + outcome-credit** | a rule organ can `act` — but it only *emits a request*; the core autonomy ladder decides, capped to **approval-gated for evolved organs by default** (never autonomous in this config). When an action is taken, the organ is rewarded only if the target's measured load actually drops — a fakeproof eligibility trace that rewards *the world improving*, not *firing*. |
+| **Gene transfer** | **vertical** — a clone inherits its parent's best tuned genes for its goal's template, not just the goal; **horizontal** — colony peers publish/adopt high-fitness genomes through a shared gene pool. |
+| **Bandit template selection** | a UCB bandit invests reproduction in templates that pay off, trying each once (optimistic prior) — proactive, payoff-directed exploration beyond the reactive need-drive. |
+
+Two observability files make the dynamics visible: **`state/evolution.log`** (per-generation
+TSV — population, mean/max/min/stddev fitness, distinct species, MAP-Elites coverage, reasoner
+fallback rate) and **`state/repertoire.txt`** (the current QD map — best organ per behavior cell).
+
+These are the rare justified edits to `lua/core/` (the reward function, selection loop,
+variation operators, and QD archive *are* the substrate of selection — they cannot be an
+evolvable organ without circularity). The rule grammar itself lives in `templates.lua`, the
+blueprint layer.
+
+---
+
 ## Architecture
 
 ### Host ↔ organism boundary
@@ -198,12 +226,13 @@ table (`bus`, `memory`, `registry`, `evolver`, `worldmodel`, `reasoner`, `autono
 | `lua/core/bus.lua` | event bus (pub/sub) — the nervous system; per-event stats |
 | `lua/core/memory.lua` | persistent cross-life memory; fitness, generation, counters |
 | `lua/core/registry.lua` | plugin loader + sandbox + hot-reload + retirement |
-| `lua/core/templates.lua` | **genome blueprints** — render organ source; includes `colony`, `supervisor`, `explorer` |
-| `lua/core/evolver.lua` | evolution engine: need→growth, mutation, selection, carrying capacity |
+| `lua/core/templates.lua` | **genome blueprints** — render organ source; the **rule-DSL/GP** organ + `colony`, `supervisor`, `explorer` |
+| `lua/core/evolver.lua` | evolution engine: need/goal/**bandit** growth, **tournament** selection + soft death, **MAP-Elites** archive, **ES** mutation, **crossover**, honest-fitness ranking |
+| `lua/core/evo_util.lua` | shared evolutionary operators (Box–Muller gauss + self-adaptive ES step) |
 | `lua/core/worldmodel.lua` | entity (per-process) dossiers: CPU/errors/temperature/trend/salience |
 | `lua/core/reasoner.lua` | sense-making: snapshot → decision schema (LLM+RAG, rule fallback) |
 | `lua/core/rag.lua` | fitness-weighted BM25 experience bank |
-| `lua/core/autonomy.lua` | the L0–L4 ladder + approval inbox + safe-list + audit log |
+| `lua/core/autonomy.lua` | the L0–L4 ladder + approval inbox + safe-list + audit log; **evolved-organ action requests + outcome-credit** |
 | `lua/core/hostcaps.lua` | host probe (RAM/cores/power/disk) |
 | `lua/core/modelmgr.lua` | meta-evolution: model ladder + capacity/need decision |
 | `lua/core/platform.lua` | OS abstraction (mac/linux/win): process list, error logs, actuators |
@@ -232,12 +261,13 @@ Directed-mode matching is bilingual: "hata"/"error" → `error_reporter`, "dosya
 plugins/    organs the organism wrote (gen_*.lua); deletable, it regrows them
 reports/    timestamped Markdown status reports (entity table + narrative + fitness)
 state/      memory.lua (cross-life memory) · evolua.log · audit.log
+            evolution.log (per-generation metrics) · repertoire.txt (MAP-Elites QD map)
             heartbeat · vitals · supervisor.log   (Phase 5: host watch)
 approvals/  pending-*.md → (you) approved/ → done/
 models/     downloaded models + current_tier (Phase 4)
-colony/     peers/<id> beacons · inbox/<id>/ mailboxes · clone.lock
-            children/<id>/ (clone sub-homes) · lineage.log (purpose ledger)
-            outcomes/<id> (S4 harvested purpose payoff, fed back into crystallization)
+colony/     peers/<id> beacons · inbox/<id>/ mailboxes · clone.lock · genepool/ (HGT)
+            children/<id>/ (clone sub-homes; inherited.lua = vertical gene transfer)
+            lineage.log (purpose ledger) · outcomes/<id> (S4 purpose payoff)
 ```
 
 | OS | Default data home (binary mode) |
@@ -270,6 +300,7 @@ script unless injected as a global.
 --no-colony                do not seed the colony organ
 --no-supervisor            do not seed the host-brainstem watch organ
 --no-explorer              do not seed the environment-exploration organ
+--no-rule                  do not seed the evolvable rule-DSL/GP organ
 --no-explore-expand        explore, but don't auto-expand perception
 --explore-root <path>      add a directory the explorer may wander (repeatable)
 ```
@@ -291,7 +322,10 @@ Host-side supervisor env knobs: `EVOLUA_WATCHDOG` (0=off), `EVOLUA_WATCHDOG_SECS
 
 `autonomy_ceiling` caps the ladder. Destructive actions (kill) **always** require approval;
 reversible safe-listed verbs (throttle, model_downgrade, model_upgrade) can act at L4 above
-`act_min_conf`. Approval is a file dance: `approvals/pending-<id>.md` → move to `approved/`
+`act_min_conf`. **Evolved organs** (rule-DSL `act`) are capped more conservatively still —
+`evolved_action_ceiling` defaults to `suggest`, so their requested actions go to the approval
+inbox, never autonomous, whatever the global ceiling. Approval is a file dance:
+`approvals/pending-<id>.md` → move to `approved/`
 to apply (archived to `done/`), delete to reject. Every decision/action is appended to
 `state/audit.log`.
 
