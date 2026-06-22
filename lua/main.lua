@@ -64,6 +64,7 @@ local function parse(args)
     elseif a == "--no-colony" then cfg.colony = false
     elseif a == "--no-supervisor" then cfg.supervisor = false
     elseif a == "--no-explorer" then cfg.explorer = false
+    elseif a == "--no-rule" then cfg.rule_seed = false
     elseif a == "--no-explore-expand" then cfg.explore_expand = false
     elseif a == "--explore-root" then cfg.explore_roots = cfg.explore_roots or {}; table.insert(cfg.explore_roots, val())
     elseif a == "--colony-id" then cfg.colony_id = val()
@@ -94,6 +95,7 @@ EvoLua — a self-evolving Lua organism
   --no-colony                do not seed the colony organ at all
   --no-supervisor            do not seed the host-brainstem watch organ
   --no-explorer              do not seed the environment-exploration organ
+  --no-rule                  do not seed the evolvable rule-DSL organ
   --no-explore-expand        explore, but don't auto-expand perception (watch dirs/logs)
   --explore-root <path>      add a directory the explorer may wander (repeatable)
   --clone-max-peers <n>      hard cap on simultaneous live instances (default: 3)
@@ -160,6 +162,7 @@ end
 if cfg.colony then seed_once("colony") end
 if cfg.supervisor then seed_once("supervisor") end
 if cfg.explorer then seed_once("explorer") end
+if cfg.rule_seed then seed_once("rule") end
 
 -- graceful Ctrl-C if the host Lua exposes signals (optional; safe if absent)
 local ok_sig = pcall(function()

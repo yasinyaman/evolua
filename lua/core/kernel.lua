@@ -34,7 +34,7 @@ function Kernel.new(cfg)
 
   -- shared organism context handed to every subsystem & plugin
   local ctx = { cfg = cfg, log = log, kernel = self }
-  ctx.bus      = Bus.new(log)
+  ctx.bus      = Bus.new(log, cfg)   -- cfg carries the honest-reward tunables
   ctx.memory   = Memory.new(cfg.state_dir .. "/memory.lua")
   ctx.registry = Registry.new(ctx)
   ctx.reporter = Reporter.new(ctx)

@@ -143,6 +143,7 @@ T["vital_monitor"] = {
 -- comms/clone cadences but can never loosen the bounds.
 T["colony"] = {
   triggers = "colony.tick",
+  protected = true,   -- seeded infrastructure: exempt from culling (can't be regrown)
   goal_keywords = {
     "çoğal", "klon", "clone", "replicate", "replikasyon", "kopya", "üre",
     "koloni", "colony", "iletişim", "haberleş", "communicate", "mesaj", "message",
@@ -460,6 +461,7 @@ T["colony"] = {
 -- synthetic (never emitted) so free-drive can't grow it; it is seeded in main.lua.
 T["supervisor"] = {
   triggers = "supervisor.tick",
+  protected = true,   -- seeded infrastructure: exempt from culling (can't be regrown)
   goal_keywords = {
     "süpervizör", "supervisor", "vital", "watchdog", "canlılık", "gözet", "sağlık", "health",
   },
@@ -527,6 +529,7 @@ T["supervisor"] = {
 -- synthetic "explore.tick"; seeded in main.lua.
 T["explorer"] = {
   triggers = "explore.tick",
+  protected = true,   -- seeded infrastructure: exempt from culling (can't be regrown)
   goal_keywords = {
     "keşif", "keşfet", "explore", "discover", "ortam", "environment", "tara", "scan", "merak",
   },
@@ -660,6 +663,186 @@ T["explorer"] = {
     return render(name, "environment exploration: scout the host + expand perception",
       { "self.heartbeat", "env.discovery" }, genes, body)
   end,
+}
+
+-- ===========================================================================
+-- RULE DSL — a typed, capability-isolated grammar the evolver can grow, mutate,
+-- and recombine. Unlike the fixed templates above (structure frozen, only numeric
+-- genes vary), a rule organ's GENOME is a list of rules:
+--     when <stimulus>, if <field> <op> <value> then <report|log|emit>
+-- Mutation rewrites the subscribed stimulus, the compared field/op/value, the
+-- action, and adds/removes rules; crossover recombines two parents' rule lists.
+-- The grammar renders ONLY safe primitives (subscribe / read ev.data / compare /
+-- report / log / emit) — it cannot express os/io, so an evolved rule organ is
+-- capability-isolated BY CONSTRUCTION (the structural-novelty + sandbox-safety
+-- win in one): values are numbers, operators come from a whitelist, fields are
+-- bracket-quoted lookups, so a mutated genome can never inject code.
+-- ===========================================================================
+local RULE = {}
+-- real stimuli the organism emits, with the NUMERIC ev.data fields each carries.
+-- alert.* are the organ's OWN emit targets, also subscribable — so rule organs can
+-- chain into pipelines (one organ's emit feeds another's stimulus).
+RULE.stimulus_fields = {
+  ["metric.cpu"]     = { "pct" },
+  ["metric.mem"]     = { "pct", "mb" },
+  ["metric.load"]    = { "one" },
+  ["proc.hot"]       = { "cpu_avg", "rss_mb" },
+  ["proc.sample"]    = { "cpu_avg", "rss_mb" },
+  ["self.heartbeat"] = { "tick", "organs", "generation" },
+  ["log.error"]      = {},
+  ["fs.change"]      = {},
+  ["env.discovery"]  = {},
+  ["alert.cpu"]      = { "value" },
+  ["alert.mem"]      = { "value" },
+  ["alert.load"]     = { "value" },
+  ["alert.proc"]     = { "value" },
+  ["alert.fs"]       = { "value" },
+  ["alert.generic"]  = { "value" },
+}
+RULE.stimuli = {}
+for s in pairs(RULE.stimulus_fields) do RULE.stimuli[#RULE.stimuli + 1] = s end
+RULE.ops     = { ">=", "<=", ">", "<", "==", "~=" }
+RULE.actions = { "report", "log", "emit" }   -- every action has an OBSERVABLE effect
+                                             -- (no "reward-only" no-op, which honest
+                                             -- fitness could not police)
+RULE.emits   = { "alert.cpu", "alert.mem", "alert.load", "alert.proc", "alert.fs", "alert.generic" }
+
+local OPSET, EMITSET = {}, {}
+for _, o in ipairs(RULE.ops)   do OPSET[o]   = true end
+for _, e in ipairs(RULE.emits) do EMITSET[e] = true end
+local function rand_pick(t) return t[math.random(#t)] end
+
+local function random_rule(stimulus)
+  local fields = RULE.stimulus_fields[stimulus] or {}
+  local r = { action = rand_pick(RULE.actions) }
+  if #fields > 0 and math.random() < 0.8 then       -- usually a real condition
+    r.field, r.op, r.value = rand_pick(fields), rand_pick(RULE.ops), math.random(1, 100)
+  end                                               -- else: fires whenever stimulus does
+  if r.action == "emit" then r.emit = rand_pick(RULE.emits) end
+  r.reward = math.random(1, 3)                       -- telemetry hint (honest fitness ignores it)
+  return r
+end
+
+local function clone_genes(g)
+  local out = { stimulus = g.stimulus, rules = {} }
+  for i, rule in ipairs(g.rules or {}) do
+    local nr = {}; for k, v in pairs(rule) do nr[k] = v end
+    out.rules[i] = nr
+  end
+  return out
+end
+
+-- render a rule genome into safe organ source (injection-proof) -----------------
+local function render_rules(name, genes)
+  local q = function(s) return string.format("%q", tostring(s)) end
+  local stim = RULE.stimulus_fields[genes.stimulus] and genes.stimulus or "self.heartbeat"
+  local lines = {}
+  for i, r in ipairs(genes.rules or {}) do
+    local cond = "true"
+    if r.field and r.op and OPSET[r.op] then
+      cond = "(tonumber(d[" .. q(r.field) .. "]) or 0) " .. r.op .. " " .. tostring(tonumber(r.value) or 0)
+    end
+    local act
+    if r.action == "emit" then
+      local em = EMITSET[r.emit] and r.emit or "alert.generic"
+      if em == stim then                              -- never re-emit our own trigger
+        act = "ctx.report(SELF, " .. q("rule " .. i) .. ")"
+      else
+        act = "ctx.bus:emit(" .. q(em) .. ", { from = SELF, value = (tonumber(d[" .. q(r.field or "") .. "]) or 0) })"
+      end
+    elseif r.action == "log" then
+      act = 'ctx.log:info("[%s] rule fired", SELF)'
+    else -- report
+      act = "ctx.report(SELF, " .. q("rule " .. i .. " on " .. stim) .. ")"
+    end
+    lines[#lines + 1] = "      if " .. cond .. " then " .. act ..
+      "; return { handled = true, reward = " .. tostring(tonumber(r.reward) or 1) .. " } end"
+  end
+  if #lines == 0 then lines[1] = "      -- (no rules)" end
+  local body = "local SELF = " .. q(name) .. "\n" ..
+    "    ctx.bus:subscribe(" .. q(stim) .. ", function(ev)\n" ..
+    "      local d = ev.data or {}\n" ..
+    table.concat(lines, "\n") .. "\n" ..
+    "      return false\n" ..
+    "    end, SELF)"
+  return render(name, "rule organ (evolved reflex on " .. stim .. ")", { stim }, {}, body)
+end
+
+-- structural mutation: rewrite ONE aspect of the genome --------------------------
+local function mutate_rule_genes(g, cfg)
+  g = clone_genes(g)
+  local maxr = (cfg and cfg.rule_max_rules) or 4
+  local rules = g.rules
+  local kind = math.random(7)
+  if kind == 1 and #rules > 0 then                 -- perturb a threshold
+    local r = rules[math.random(#rules)]
+    if r.value then
+      local jit = (math.random() * 0.5 + 0.05) * (math.random() < 0.5 and -1 or 1)
+      r.value = math.max(1, math.floor(r.value * (1 + jit) + 0.5))
+    end
+  elseif kind == 2 and #rules > 0 then             -- flip the operator
+    rules[math.random(#rules)].op = rand_pick(RULE.ops)
+  elseif kind == 3 and #rules > 0 then             -- watch a different field
+    local fields = RULE.stimulus_fields[g.stimulus] or {}
+    if #fields > 0 then rules[math.random(#rules)].field = rand_pick(fields) end
+  elseif kind == 4 and #rules < maxr then          -- grow a rule
+    rules[#rules + 1] = random_rule(g.stimulus)
+  elseif kind == 5 and #rules > 1 then             -- prune a rule
+    table.remove(rules, math.random(#rules))
+  elseif kind == 6 and #rules > 0 then             -- change the action
+    local r = rules[math.random(#rules)]
+    r.action = rand_pick(RULE.actions)
+    if r.action == "emit" and not r.emit then r.emit = rand_pick(RULE.emits) end
+  else                                             -- DIFFERENTIATE: jump to a new niche
+    g.stimulus = rand_pick(RULE.stimuli)
+    local fields = RULE.stimulus_fields[g.stimulus] or {}
+    for _, r in ipairs(rules) do                   -- keep each rule's field valid
+      if #fields > 0 then
+        if r.field then r.field = rand_pick(fields) end
+      else
+        r.field, r.op, r.value = nil, nil, nil
+      end
+    end
+  end
+  return g
+end
+
+-- crossover: uniform recombination of two parents' rule lists --------------------
+local function crossover_rule_genes(g1, g2, cfg)
+  local child = { stimulus = (math.random() < 0.5) and g1.stimulus or g2.stimulus, rules = {} }
+  local fields = RULE.stimulus_fields[child.stimulus] or {}
+  local fok = {}; for _, f in ipairs(fields) do fok[f] = true end
+  local pool = {}
+  for _, r in ipairs(g1.rules or {}) do pool[#pool + 1] = r end
+  for _, r in ipairs(g2.rules or {}) do pool[#pool + 1] = r end
+  for _, r in ipairs(pool) do
+    if math.random() < 0.5 then
+      local nr = {}; for k, v in pairs(r) do nr[k] = v end
+      if nr.field and not fok[nr.field] then         -- repair fields invalid for the niche
+        if #fields > 0 then nr.field = fields[math.random(#fields)]
+        else nr.field, nr.op, nr.value = nil, nil, nil end
+      end
+      child.rules[#child.rules + 1] = nr
+    end
+  end
+  local maxr = (cfg and cfg.rule_max_rules) or 4
+  while #child.rules > maxr do table.remove(child.rules) end   -- respect the genome-size bound (mutation does)
+  if #child.rules == 0 then child.rules[1] = random_rule(child.stimulus) end
+  return child
+end
+
+T["rule"] = {
+  triggers = "rule.tick",      -- synthetic: free-drive can't auto-grow it; it is
+                               -- seeded once, then proliferates by mutation/crossover
+  goal_keywords = { "kural", "rule", "refleks", "reflex" },   -- distinctive (no generic "behavior"/"evolve" that a user --goal would collide with)
+  -- seed in the self.heartbeat "incubator" niche — alive on every platform (unlike
+  -- macOS's /proc-based metric.cpu) so the organ survives long enough to DIFFERENTIATE
+  -- (mutation kind 7 jumps it to a live event niche: log.error / fs.change / proc.hot).
+  default_genes = { stimulus = "self.heartbeat",
+    rules = { { field = "tick", op = ">=", value = 10, action = "report", reward = 1 } } },
+  build           = render_rules,
+  mutate_genes    = mutate_rule_genes,     -- evolver delegates structural mutation here
+  crossover_genes = crossover_rule_genes,  -- evolver delegates recombination here
 }
 
 return T

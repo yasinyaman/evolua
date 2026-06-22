@@ -154,11 +154,30 @@ return {
   -- evolutionary pressure
   need_threshold = 6,        -- unhandled stimulus streak that signals an unmet need
   mutate_chance  = 0.25,     -- chance per step to breed a variant of the fittest organ
+  es_sigma0      = 0.2,      -- ES: initial per-gene mutation step size (self-adapted thereafter)
+  es_tau         = 0.3,      -- ES: learning rate of the step size (log-normal sigma mutation)
   max_per_template = 3,      -- carrying capacity: max living variants of one species
   grace_ticks    = 25,       -- newborn protection before it can be culled
-  retire_floor   = 0.5,      -- fitness below this (post-grace) → retire
+  tournament_k   = 3,        -- breeding: k-tournament parent-selection sample size (1 = pure elitism)
+  cull_rate      = 0.5,      -- death: scales the probabilistic cull (0 = never die, 1 = aggressive)
+  crossover_chance = 0.15,   -- breeding: chance per step to recombine two parents (templates that support it)
+  mapelites_chance = 0.3,    -- breeding: chance per step to illuminate a random behavior cell (QD)
+  rule_seed        = true,   -- seed one evolvable rule-DSL organ (open-ended GP population)
+  rule_max_rules   = 4,      -- bound a rule organ's genome size
+  retire_floor   = 0.5,      -- fitness floor: below 2× this, death probability rises toward 1
   decay_rate     = 0.03,     -- per-step fitness entropy
   error_penalty  = 1,
+
+  -- honest fitness — reward is DERIVED from observable bus facts, not from the
+  -- number an organ declares about itself (see core/bus.lua). Breaks reward-
+  -- hacking (e.g. the colony minting reward=4 each heartbeat) and the frequency
+  -- bias of constant per-fire reward.
+  reward_base        = 1,    -- base credit for handling a stimulus
+  reward_gap_cap     = 8,    -- max surprise multiplier (how starved the stimulus was)
+  reward_cost_weight = 0.5,  -- penalty per CPU-second the reactor burns (parsimony; 0 = off)
+  fitness_share      = true, -- split a stimulus's credit across its co-handlers (anti-redundancy)
+  metrics_log        = true, -- append per-generation evolution metrics to state/evolution.log
+  max_emit_depth     = 8,    -- bus re-entrancy cap: breaks runaway emit loops (e.g. chained rule organs)
 
   -- reporting
   report_flush = 12,         -- observations buffered before a report is written
