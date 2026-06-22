@@ -147,6 +147,11 @@ return {
   purpose_learn         = true,  -- false (or --no-purpose-learn) = S1–S3 portfolio only
   purpose_prior         = 1e6,   -- optimistic payoff for untried goals (→ try each once)
   purpose_explore_every = 4,     -- every Nth split, probe the current gap regardless of payoff
+  -- horizontal gene transfer (#12): peers swap high-fitness genomes via colony/genepool/
+  hgt              = true,   -- publish my best genome + adopt clearly-better peer genomes
+  hgt_min_fitness  = 3,      -- don't publish a genome below this fitness
+  hgt_margin       = 2,      -- only adopt a peer genome this much fitter than my local best
+  hgt_every        = 6,      -- adopt at most once every N link cycles
   -- the next three are set at runtime by main.lua (bridged from globals → cfg so
   -- the sandboxed organ can read them); listed here for documentation only.
   colony_id            = nil,    -- this instance's colony id (root auto-generates; children get --colony-id)
@@ -170,6 +175,8 @@ return {
   cull_rate      = 0.5,      -- death: scales the probabilistic cull (0 = never die, 1 = aggressive)
   crossover_chance = 0.15,   -- breeding: chance per step to recombine two parents (templates that support it)
   mapelites_chance = 0.3,    -- breeding: chance per step to illuminate a random behavior cell (QD)
+  bandit_chance    = 0.15,   -- breeding: chance per step to invest in the highest-UCB template (#13)
+  bandit_c         = 1.5,    -- bandit exploration constant (higher = try under-sampled templates more)
   rule_seed        = true,   -- seed one evolvable rule-DSL organ (open-ended GP population)
   rule_max_rules   = 4,      -- bound a rule organ's genome size
   retire_floor   = 0.5,      -- fitness floor: below 2× this, death probability rises toward 1

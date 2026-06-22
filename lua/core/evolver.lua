@@ -51,6 +51,9 @@ function Evolver:spawn(template_key, genes, lineage, sigma)
     organ = name, template = template_key, genes = genes, lineage = lineage, sigma = sigma,
   })
   self.organs[name] = { template = template_key, genes = genes, born_tick = self.ctx.kernel.tick, sigma = sigma }
+  local md = self.ctx.memory.data                      -- bandit arm-pull count (#13)
+  md.template_tries = md.template_tries or {}
+  md.template_tries[template_key] = (md.template_tries[template_key] or 0) + 1
   self.ctx.log:info("\27[35m✦ gen %d: spawned organ '%s' from <%s>\27[0m", gen, name, template_key)
   self.ctx.registry:load(path)
   self.ctx.memory:reward(name, 1) -- seed fitness so newborns get a grace window
@@ -215,6 +218,37 @@ function Evolver:update_archive()
   self.archive, self.elites = fresh, elites
 end
 
+-- BANDIT over templates (#13): arms = templates, reward = current average fitness
+-- of an arm's living organs, with a UCB exploration bonus and an optimistic prior
+-- for untried arms (→ each template is tried once, then investment flows to what
+-- pays off ON THIS HOST). Reuses the colony's S4 bandit idea at the organ level.
+function Evolver:bandit_pick()
+  local tries = self.ctx.memory.data.template_tries or {}
+  local fit = self.ctx.memory.data.fitness or {}
+  local sum, cnt, N = {}, {}, 0
+  for name, rec in pairs(self.organs) do
+    local l = self.ctx.registry.loaded[name]
+    if l and l.alive then
+      sum[rec.template] = (sum[rec.template] or 0) + (fit[name] or 0)
+      cnt[rec.template] = (cnt[rec.template] or 0) + 1
+    end
+  end
+  for _, n in pairs(tries) do N = N + n end
+  local c = self.ctx.cfg.bandit_c or 1.5
+  local best, bscore = nil, -1e18
+  for key in pairs(Templates) do
+    local n = tries[key] or 0
+    local score
+    if n == 0 then score = 1e17                     -- optimistic prior: try each arm once
+    else
+      local avg = cnt[key] and (sum[key] / cnt[key]) or 0
+      score = avg + c * math.sqrt(math.log(N + 1) / n)
+    end
+    if score > bscore then best, bscore = key, score end
+  end
+  return best
+end
+
 -- one evolutionary step ----------------------------------------------------
 function Evolver:step()
   local ctx = self.ctx
@@ -365,6 +399,24 @@ function Evolver:step()
           self:spawn(ra.template, tpl.crossover_genes(ra.genes, rb.genes, cfg), a.name .. "×" .. b.name)
         end
       end
+    end
+  end
+
+  -- BANDIT drive (#13): occasionally invest a reproduction in the highest-UCB
+  -- template — mutate its fittest organ if it has one, else grow it fresh (so the
+  -- optimistic prior proactively tries untried templates, beyond need/goal drives).
+  if math.random() < (cfg.bandit_chance or 0.15) then
+    local key = self:bandit_pick()
+    if key then
+      local bestnm, bestsc = nil, -1e18
+      for nm, rec in pairs(self.organs) do
+        local l = ctx.registry.loaded[nm]
+        if rec.template == key and l and l.alive and (fitness[nm] or 0) > bestsc then
+          bestnm, bestsc = nm, (fitness[nm] or 0)
+        end
+      end
+      if bestnm then self:mutate(bestnm)
+      elseif self:population(key) < (cfg.max_per_template or 3) then self:spawn(key) end
     end
   end
 

@@ -411,6 +411,61 @@ T["colony"] = {
           string.format("purpose=%s\npayoff=%.2f\ngen=%d\nat=%d\n", cfg.goal, purpose_payoff(), gen(), now))
       end
 
+      -- 4c) HORIZONTAL GENE TRANSFER (#12): publish my fittest organ's genome to a
+      --     shared gene pool, and periodically ADOPT a peer-evolved genome that
+      --     clearly beats my local best for that template — good alleles spread
+      --     across the colony (same file-dance as peers/outcomes). Runs in any
+      --     instance; with peers it cross-pollinates, solo it's effectively a no-op.
+      if cfg.hgt ~= false then
+        local gpdir = cdir .. "/genepool"; ensure_dir(gpdir)
+        local fit = (ctx.memory.data and ctx.memory.data.fitness) or {}
+        local bn, bs, bt
+        for nm, rec in pairs(ctx.evolver.organs or {}) do
+          if (fit[nm] or 0) > (bs or -1) then bn, bs, bt = nm, (fit[nm] or 0), rec.template end
+        end
+        if bn and bs > (cfg.hgt_min_fitness or 3) then          -- publish, if I beat the pool
+          local rec = ctx.evolver.organs[bn]
+          local glines = {}                                   -- only FLAT-NUMERIC genomes transfer;
+          for k, v in pairs(rec.genes or {}) do               -- a rule organ's structural genome
+            if type(v) == "number" then glines[#glines + 1] = string.format("genes %s %g", k, v) end
+          end                                                 -- (stimulus/rules) has no numeric top-
+          if #glines > 0 then                                 -- level genes → skipped, no crash.
+            local cur = read_file(gpdir .. "/" .. bt)
+            local curf = cur and tonumber(cur:match("fitness ([%d%.%-eE]+)")) or -1
+            if bs > curf then                                 -- line format (sandbox has no `load`)
+              local lines = { string.format("fitness %g", bs) }
+              for _, l in ipairs(glines) do lines[#lines + 1] = l end
+              for k, v in pairs(rec.sigma or {}) do
+                if type(v) == "number" then lines[#lines + 1] = string.format("sigma %s %g", k, v) end
+              end
+              write_file(gpdir .. "/" .. bt, table.concat(lines, "\n") .. "\n")
+            end
+          end
+        end
+        if tick % ((genes.link_every or 5) * (cfg.hgt_every or 6)) == 0 then  -- adopt one clear winner
+          for _, tmpl in ipairs(list_dir(gpdir)) do
+            local txt = read_file(gpdir .. "/" .. tmpl) or ""
+            local pf = tonumber(txt:match("fitness ([%d%.%-eE]+)"))
+            local mybest = -1
+            for nm, rec in pairs(ctx.evolver.organs or {}) do
+              if rec.template == tmpl and (fit[nm] or 0) > mybest then mybest = (fit[nm] or 0) end
+            end
+            if pf and pf > mybest + (cfg.hgt_margin or 2)
+               and ctx.evolver:population(tmpl) < (cfg.max_per_template or 3) then
+              local g, sg = {}, {}                            -- parse line format (no `load` in sandbox)
+              for sec, k, v in txt:gmatch("(%a+) ([%w_]+) ([%d%.%-eE]+)") do
+                if sec == "genes" then g[k] = tonumber(v) elseif sec == "sigma" then sg[k] = tonumber(v) end
+              end
+              if next(g) and ctx.evolver:spawn(tmpl, g, "hgt", next(sg) and sg or nil) then
+                ctx.log:info("\27[36m\u{21c4} [%s] HGT: adopted %s genome (fitness %.1f > local %.1f)\27[0m",
+                  SELF, tmpl, pf, mybest)
+                break
+              end
+            end
+          end
+        end
+      end
+
       -- 5) replication — OPT-IN, INTELLIGENTLY GATED, and hard-bounded.
       --    Hard caps (depth, population) are the ceiling; the split only fires
       --    under genuine load AND when the host can host another worker; a
