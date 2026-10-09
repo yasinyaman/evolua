@@ -232,6 +232,15 @@ T["colony"] = {
       return sum
     end
 
+    -- the colony's purposes are the canonical goals in cfg.template_goal. Only
+    -- those enter the S4 ledger: a user's free-text --goal (say, a Turkish
+    -- sentence) maps to no template, always pays 0, and would only become a
+    -- bandit arm that wastes splits.
+    local function canonical(goal)
+      for _, g in pairs(cfg.template_goal or {}) do if g == goal then return true end end
+      return false
+    end
+
     -- aggregate the colony's harvested outcomes: goal -> {sum, n} (the S4 ledger)
     local function read_outcomes()
       local dir, agg = root() .. "/colony/outcomes", {}
@@ -239,7 +248,7 @@ T["colony"] = {
         local txt = read_file(dir .. "/" .. fn)
         local g = txt and txt:match("purpose=([^\n]+)")
         local p = txt and tonumber(txt:match("payoff=([%d%.%-]+)"))
-        if g and p then
+        if g and p and canonical(g) then      -- ignores entries older versions wrote
           local a = agg[g] or { sum = 0, n = 0 }
           a.sum, a.n = a.sum + p, a.n + 1; agg[g] = a
         end
@@ -391,7 +400,7 @@ T["colony"] = {
 
       -- 4b) S4 harvest: a purpose-directed member reports how well its purpose is
       --     paying off, so the root can learn which purposes are worth spawning.
-      if cfg.goal and cfg.goal ~= "" and cfg.purpose_learn ~= false then
+      if cfg.goal and canonical(cfg.goal) and cfg.purpose_learn ~= false then
         local odir = cdir .. "/outcomes"
         ensure_dir(odir)
         write_file(odir .. "/" .. mid,
