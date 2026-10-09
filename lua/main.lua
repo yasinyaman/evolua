@@ -54,6 +54,19 @@ do
   end
 end
 
+-- Unattended operation is OPT-IN (--unattended or EVOLUA_UNATTENDED=1): act on its
+-- own (reversible, safe-listed verbs only) and acquire a better decision model
+-- without approval. One switch, so the three settings can't drift apart.
+local function unattended()
+  cfg.autonomy_ceiling = "act"
+  cfg.model_unattended = true
+  for _, v in ipairs(cfg.safe_actions) do
+    if v == "model_upgrade" then return end
+  end
+  table.insert(cfg.safe_actions, "model_upgrade")
+end
+if os.getenv("EVOLUA_UNATTENDED") == "1" then unattended() end
+
 -- ---- minimal flag parser -------------------------------------------------
 local function parse(args)
   local i = 1
@@ -68,6 +81,8 @@ local function parse(args)
     elseif a == "--watch-dir" then table.insert(cfg.watch_dirs, val())
     elseif a == "--watch-log" then table.insert(cfg.watch_logs, val())
     elseif a == "--log-level" then cfg.log_level = val()
+    elseif a == "--autonomy" then cfg.autonomy_ceiling = val()
+    elseif a == "--unattended" then unattended()
     -- colony / self-replication
     elseif a == "--clone" then cfg.clone_enabled = true
     elseif a == "--no-clone" then cfg.clone_enabled = false
@@ -99,6 +114,10 @@ EvoLua — a self-evolving Lua organism
   --watch-dir <path>         add a directory to filesystem perception
   --watch-log <path>         add a log file to log perception
   --log-level <lvl>          debug|info|warn|error
+  --autonomy <lvl>           autonomy ceiling: learn|report|notify|suggest|act (default: report;
+                             suggest = proposed actions + model upgrades go to approvals/)
+  --unattended               act on its own (reversible, safe-listed verbs only) and download a
+                             better decision model WITHOUT approval (= EVOLUA_UNATTENDED=1)
 
   --clone                    allow the colony to spawn real OS-process clones (default: off)
   --no-clone                 forbid replication (used internally for child instances)

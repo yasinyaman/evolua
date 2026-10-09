@@ -185,11 +185,11 @@ philosophy) that's isolated enough not to clobber core globals, wires its subscr
   with strict parsing and rule fallback on any garbage/missing field. `lua/core/rag.lua` is a
   fitness-weighted BM25 experience bank feeding exemplars into the prompt.
 - `lua/core/autonomy.lua` — the **L0–L4 ladder**: learn → report → notify → suggest → act.
-  `autonomy_ceiling` hard-caps it. ⚠️ **This working copy is configured UNATTENDED**
-  (`autonomy_ceiling = "act"`, `model_unattended = true`, `model_upgrade` safe-listed in
-  `config.lua`) — diverging from the README's safe `report` default — so the organism *acts*
-  on its own, including **downloading a better decision model without approval**. Set
-  `autonomy_ceiling = "report"` for the safe default. Destructive actions (kill) *always*
+  `autonomy_ceiling` hard-caps it. The committed default is **safe**: `autonomy_ceiling =
+  "report"`, `model_unattended = false`, `model_upgrade` not safe-listed. `--autonomy suggest`
+  routes proposals to the approval inbox; `--unattended` (or `EVOLUA_UNATTENDED=1`) flips all
+  three at once so the organism *acts* on its own, including **downloading a better decision
+  model without approval** — keep that opt-in, never the default. Destructive actions (kill) *always*
   require approval; reversible safe-listed verbs (throttle, model_downgrade, model_upgrade)
   can act at L4 above `act_min_conf`. **Evolved organs** (rule-DSL `act`) never execute — they
   *emit* an `action.request` that `Autonomy:request` routes through this same ladder but capped

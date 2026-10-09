@@ -41,12 +41,13 @@ return {
   reasoner_grow_conf      = 0.5, -- min confidence to grow a routed organ
   rag_k                   = 3,   -- experience-bank exemplars injected into the prompt
 
-  -- autonomy ladder (Faz 3) — how far the organism may act on its own
-  -- NOTE: set to UNATTENDED ("act" + model_upgrade safe-listed) so the organism
-  -- acquires its own decision model without approval. Revert ceiling to "report"
-  -- and drop model_upgrade / model_unattended for the safe, approval-gated default.
-  autonomy_ceiling = "act",      -- learn | report | notify | suggest | act
-  safe_actions     = { "throttle", "notify", "model_downgrade", "model_upgrade" }, -- reversible verbs allowed at L4
+  -- autonomy ladder (Faz 3) — how far the organism may act on its own.
+  -- SAFE by default: it only reports. --autonomy suggest routes proposed actions
+  -- (and model upgrades) to the approval inbox. Unattended operation is opt-in:
+  -- --unattended (or EVOLUA_UNATTENDED=1) sets autonomy_ceiling = "act",
+  -- model_unattended = true and safe-lists model_upgrade, in one switch.
+  autonomy_ceiling = "report",   -- learn | report | notify | suggest | act
+  safe_actions     = { "throttle", "notify", "model_downgrade" }, -- reversible verbs allowed at L4
   suggest_min_conf = 0.6,        -- min confidence to file an approval suggestion
   act_min_conf     = 0.85,       -- min confidence for autonomous (L4) action
   -- evolved-organ actions (rule-DSL "act"): routed through the SAME ladder as the
@@ -60,7 +61,7 @@ return {
   curiosity        = 0.3,        -- 0 = passive · 1 = constantly explore the system
 
   -- model meta-evolution (Faz 4) — size the decision model to the host
-  model_unattended    = true,    -- download a better brain WITHOUT approval (bounded to ladder url+sha)
+  model_unattended    = false,   -- download a better brain WITHOUT approval (bounded to ladder url+sha); --unattended
   model_force_upgrade = false,   -- opt-in: always treat the brain as upgradeable (skip bottleneck test)
   model_ignore_battery= false,   -- opt-in: allow acquisition while on battery
   model_check_every   = 50,      -- reconsider the model every N ticks

@@ -204,6 +204,9 @@ colony/     peers/<id> · inbox/<id>/ · clone.lock · genepool/ (yatay gen tran
 ```
 --goal "<text>"            direktifli mod (--mode directed ima eder)
 --ticks <n> / --tick-seconds <s>   sınırlı koşu / tick hızı
+--autonomy <lvl>           otonomi tavanı: learn|report|notify|suggest|act (varsayılan: report)
+--unattended               kendi başına davran + onaysız daha iyi model indir
+                           (= EVOLUA_UNATTENDED=1; varsayılan kapalı)
 --clone                    OS-süreç klonlamasına izin ver (varsayılan: kapalı)
 --clone-eager              yer varsa hep böl (yük/kapasite kapısını atla)
 --clone-ignore-battery     pilde de klon doğur
@@ -233,8 +236,11 @@ Süpervizör env: `EVOLUA_WATCHDOG` (0=kapalı), `_SECS`, `_STALL`, `_KILL` (opt
 varsayılanı `suggest`, yani istekleri global tavandan bağımsız olarak onay kutusuna gider, asla
 otonom değil. Onay bir dosya dansıdır. Her karar/aksiyon `state/audit.log`'a yazılır.
 
-> ⚠️ Bu çalışma kopyası **gözetimsiz** ayarlı gelir (`autonomy_ceiling = "act"`). Güvenli
-> varsayılan için `autonomy_ceiling = "report"`.
+Varsayılan tavan **`report`**: organizma yalnızca rapor yazar. `--autonomy suggest` önerilen
+aksiyonları (ve model yükseltmelerini) onay kutusuna gönderir. Gözetimsiz çalışma **opt-in**'dir:
+`--unattended` (ya da `EVOLUA_UNATTENDED=1`) `autonomy_ceiling = "act"`, `model_unattended = true`
+yapar ve `model_upgrade`'i güvenli listeye ekler; organizma geri-alınabilir aksiyonları alır ve
+sormadan daha iyi bir karar modeli indirir.
 
 ---
 
@@ -252,7 +258,8 @@ açıklamalı çıktısı: [docs/DEMO.tr.md](docs/DEMO.tr.md).
 
 ## Güvenlik
 
-Organlar kasıtlı geniş yetkili bir Lua sandbox'ında koşar (`os`/`io` açık). Kendini çoğaltma
+Organlar kasıtlı geniş yetkili bir Lua sandbox'ında koşar (`os`/`io` açık). Otonomi varsayılanı
+`report`; gözetimsiz çalışma için `--unattended` gerekir. Kendini çoğaltma
 **varsayılan kapalı** ve açıkken üç katmanlı sınırlı; süpervizör opt-in son-çare dışında
 **yalnız gözler**. Tanımadığın bir host'ta çalıştırmadan önce `watch_dirs`/`watch_logs`/
 `autonomy_ceiling`'i gözden geçir.
@@ -268,7 +275,7 @@ Tasarımı gereği:
 - **geniş yetkilerle çalışır** — organlar kasıtlı geniş yetkili bir Lua sandbox'ında koşar (`os`/`io` açık);
 - **host'unu gözler** — süreç-başına istatistik, OS hata logları ve (explorer ile) dizinleri, log dosyalarını, dinleyen portları ve `$PATH`'ini tarar (salt-okunur);
 - **kendini çoğaltabilir** — `--clone` ile gerçek OS süreçleri doğurur (sınırlı, ama gerçek);
-- **bu kopyada *gözetimsiz* gelir** — `autonomy_ceiling = "act"` geri-alınabilir aksiyonları (hatta sormadan model indirmeyi) açar. Güvenli, onay-kapılı varsayılan için `autonomy_ceiling = "report"` yap.
+- **istersen kendi başına davranır** — `--unattended` (ya da `EVOLUA_UNATTENDED=1`) geri-alınabilir aksiyonları (hatta sormadan model indirmeyi) açar. Varsayılan (`autonomy_ceiling = "report"`) yalnızca raporlar.
 
 Önemli ya da tanımadığın bir sistemde çalıştırmadan önce `watch_dirs`/`watch_logs`/
 `autonomy_ceiling`'i gözden geçir, ürettiği organları (`plugins/`) incele ve yalnızca yetkili

@@ -288,6 +288,9 @@ script unless injected as a global.
 --goal "<text>"            directive for directed mode (implies --mode directed)
 --ticks <n>                run for n ticks then rest (default: forever)
 --tick-seconds <s>         seconds per tick (0.2 for a fast demo)
+--autonomy <lvl>           autonomy ceiling: learn|report|notify|suggest|act (default: report)
+--unattended               act on its own + download a better model without approval
+                           (= EVOLUA_UNATTENDED=1; off by default)
 
 --clone                    allow the colony to spawn real OS-process clones (default: off)
 --clone-eager              split whenever there's room (skip the load/capacity gate)
@@ -321,7 +324,7 @@ Host-side supervisor env knobs: `EVOLUA_WATCHDOG` (0=off), `EVOLUA_WATCHDOG_SECS
 | **L4 act** | autonomous action (reversible + safe-listed only) | confidence ≥ threshold **and** ceiling ≥ L4 |
 
 `autonomy_ceiling` caps the ladder. Destructive actions (kill) **always** require approval;
-reversible safe-listed verbs (throttle, model_downgrade, model_upgrade) can act at L4 above
+reversible safe-listed verbs (throttle, model_downgrade; model_upgrade only with `--unattended`) can act at L4 above
 `act_min_conf`. **Evolved organs** (rule-DSL `act`) are capped more conservatively still —
 `evolved_action_ceiling` defaults to `suggest`, so their requested actions go to the approval
 inbox, never autonomous, whatever the global ceiling. Approval is a file dance:
@@ -329,9 +332,11 @@ inbox, never autonomous, whatever the global ceiling. Approval is a file dance:
 to apply (archived to `done/`), delete to reject. Every decision/action is appended to
 `state/audit.log`.
 
-> ⚠️ This working copy ships configured **unattended** (`autonomy_ceiling = "act"`,
-> `model_unattended = true`, model upgrade safe-listed). Set `autonomy_ceiling = "report"`
-> for the safe, approval-gated default.
+The default ceiling is **`report`**: the organism only writes reports. `--autonomy suggest`
+sends proposed actions (and model upgrades) to the approval inbox. Unattended operation is
+**opt-in**: `--unattended` (or `EVOLUA_UNATTENDED=1`) sets `autonomy_ceiling = "act"` and
+`model_unattended = true` and safe-lists `model_upgrade`, so the organism takes reversible
+actions and downloads a better decision model without asking.
 
 ---
 
@@ -353,8 +358,8 @@ For a narrated capture of a real run, see [docs/DEMO.md](docs/DEMO.md).
 ## Safety
 
 Organs run in a deliberately permissive Lua sandbox (`os`/`io` open) — a CI/agent philosophy.
-The autonomy default *should* be `report`; this working copy is intentionally unattended (see
-above). Self-replication is **off by default** and triply bounded when enabled; the supervisor
+The autonomy default is `report`; unattended operation needs `--unattended` (see above).
+Self-replication is **off by default** and triply bounded when enabled; the supervisor
 **observes only** unless you opt into its last-resort exit. The colony spawns child *processes*
 only with `--clone`. Review `watch_dirs` / `watch_logs` / `autonomy_ceiling` before running on
 an unfamiliar host, and inspect the organs in `plugins/` — you can read, review, and delete them.
@@ -370,7 +375,7 @@ By design it:
 - **runs with broad permissions** — organs execute in a deliberately permissive Lua sandbox (`os`/`io` open);
 - **observes your host** — per-process stats, OS error logs, and (via the explorer) scans directories, log files, listening ports, and your `$PATH` (read-only);
 - **can self-replicate** — with `--clone` it spawns real OS processes (bounded, but real);
-- **ships configured *unattended* in this copy** — `autonomy_ceiling = "act"` lets it take reversible actions and even download a model without asking. Set `autonomy_ceiling = "report"` for the safe, approval-gated default.
+- **can act on its own when you opt in** — `--unattended` (or `EVOLUA_UNATTENDED=1`) lets it take reversible actions and even download a model without asking. The default (`autonomy_ceiling = "report"`) only reports.
 
 Review `watch_dirs` / `watch_logs` / `autonomy_ceiling` and inspect the organs it grows under
 `plugins/` before running on an important or unfamiliar system, and only run it where you are
