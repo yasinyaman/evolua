@@ -45,17 +45,31 @@ fn self_rss_mb() -> Option<u64> {
     String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().ok().map(|kb| kb / 1024)
 }
 
-/// Best-effort count of live colony members: processes whose command line
-/// mentions our binary. 0 if `ps` is unavailable. A coarse fork-bomb sentinel
-/// that the Lua side can compare against its own peer-beacon census.
+/// Best-effort count of live colony members: processes whose executable name
+/// is exactly our binary's. Matching anywhere in the command line also counted
+/// shell wrappers, `timeout evolua …` and editors with the repo open (a single
+/// instance reported colony_procs=3). 0 if `ps` is unavailable (Windows). A
+/// coarse fork-bomb sentinel, reported only — the Lua side sets no threshold on it.
 fn colony_procs(marker: &str) -> u64 {
-    match Command::new("ps").args(["-ax", "-o", "command="]).output() {
+    // Linux truncates comm to 15 bytes; compare against the same prefix
+    let want = if cfg!(target_os = "linux") {
+        marker.char_indices().nth(15).map_or(marker, |(i, _)| &marker[..i])
+    } else {
+        marker
+    };
+    match Command::new("ps").args(["-ax", "-o", "comm="]).output() {
         Ok(o) => String::from_utf8_lossy(&o.stdout)
             .lines()
-            .filter(|l| l.contains(marker))
+            .filter(|l| exe_name(l) == want)
             .count() as u64,
         Err(_) => 0,
     }
+}
+
+/// Basename of a `ps -o comm=` entry (macOS prints the full path, Linux the name).
+fn exe_name(comm: &str) -> &str {
+    let comm = comm.trim();
+    comm.rsplit(['/', '\\']).next().unwrap_or(comm)
 }
 
 fn append(path: &Path, line: &str) {
@@ -126,6 +140,27 @@ fn run(home: PathBuf) {
                 "FATAL last-resort exit: stalled {hb_age}s >= {kill_secs}s"
             ));
             std::process::exit(70);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::exe_name;
+
+    #[test]
+    fn exe_name_is_the_basename_of_comm() {
+        assert_eq!(exe_name("/Users/me/evolua/target/release/evolua"), "evolua");
+        assert_eq!(exe_name("evolua"), "evolua");
+        assert_eq!(exe_name("  evolua \n"), "evolua");
+        assert_eq!(exe_name(r"C:\tools\evolua.exe"), "evolua.exe");
+    }
+
+    #[test]
+    fn wrappers_and_editors_are_not_colony_members() {
+        // what `ps -o command=` used to match on
+        for comm in ["/bin/zsh", "/usr/bin/timeout", "/Applications/Code.app/Contents/MacOS/Electron", "evolua-helper"] {
+            assert_ne!(exe_name(comm), "evolua");
         }
     }
 }
