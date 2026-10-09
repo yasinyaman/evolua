@@ -34,6 +34,9 @@ cargo build --release --features 'embed_smol acquire'   # + runtime model yükse
 ./target/release/evolua                                      # süresiz yaşar
 ```
 
+Etiketli sürümler (`v*`) Linux x86_64 (statik, musl) ve macOS (arm64, x86_64) için varsayılan
+özellikli hazır binary'ler ekler — bkz. `.github/workflows/release.yml`.
+
 **Derlemeden çalıştır** — stok bir `lua` (5.3+) organizmayı doğrudan koşar:
 
 ```bash

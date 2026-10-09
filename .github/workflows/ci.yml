@@ -38,3 +38,25 @@ jobs:
         run: $LUA tests/run.lua
       - name: Bounded behavior suite
         run: scripts/fulltest.sh
+
+  # every opt-in feature set must keep compiling, lint-clean, with its tests
+  # (embed_smol is left out: it needs models/smol.gguf, which isn't in the repo)
+  features:
+    name: features (${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ["acquire", "llm", "llm acquire"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.features }}
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --features "${{ matrix.features }}" -- -D warnings
+      - name: Tests
+        run: cargo test --locked --features "${{ matrix.features }}"

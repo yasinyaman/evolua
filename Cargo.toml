@@ -34,8 +34,9 @@ anyhow = "1"
 
 # Faz 2 — embedded "decision brain" (opt-in). With `llm` off, the binary stays
 # mlua-only and the Lua reasoner falls back to rules. llama-cpp-2 default-features
-# = false → CPU backend (GPU is Faz 4, separate feature).
-llama-cpp-2 = { version = "0.1", default-features = false, optional = true }
+# = false → CPU backend (GPU is Faz 4, separate feature). Pinned to an exact
+# version: 0.1.x releases track llama.cpp and have broken the API between patches.
+llama-cpp-2 = { version = "=0.1.150", default-features = false, optional = true }
 encoding_rs = { version = "0.8", optional = true }
 
 # Faz 4 — model self-upgrade (opt-in). Downloads a larger GGUF over HTTPS and

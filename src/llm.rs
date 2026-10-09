@@ -38,6 +38,7 @@ impl Brain {
     ///   1. $EVOLUA_MODEL (explicit path)
     ///   2. <home>/models/decision.gguf  (downloaded / user-provided)
     ///   3. embedded tiny model (feature `embed_smol`)
+    ///
     /// Returns None if nothing is available → caller skips the binding and the
     /// Lua reasoner uses rules only.
     pub fn resolve(home: &Path, n_ctx: u32) -> Option<Brain> {
@@ -121,12 +122,12 @@ impl Brain {
         ]);
 
         let mut out = String::new();
-        let mut n_cur = tokens.len() as i32;
         let mut decoder = encoding_rs::UTF_8.new_decoder();
         let budget = (self.n_ctx as usize).saturating_sub(tokens.len());
         let max_new = max_tokens.min(budget);
 
-        for _ in 0..max_new {
+        // positions continue right after the prompt
+        for n_cur in (tokens.len() as i32..).take(max_new) {
             let token = sampler.sample(&ctx, batch.n_tokens() - 1);
             sampler.accept(token);
             if self.model.is_eog_token(token) {
@@ -137,7 +138,6 @@ impl Brain {
             }
             batch.clear();
             batch.add(token, n_cur, &[0], true)?;
-            n_cur += 1;
             ctx.decode(&mut batch)?;
         }
         Ok(out)

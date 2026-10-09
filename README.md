@@ -38,6 +38,9 @@ cargo build --release --features 'embed_smol gpu-metal' # macOS GPU backend
 ./target/release/evolua --help                               # all flags
 ```
 
+Tagged releases (`v*`) attach prebuilt default-feature binaries for Linux x86_64 (static, musl)
+and macOS (arm64, x86_64) — see `.github/workflows/release.yml`.
+
 **Run without building** — a stock `lua` (5.3+) runs the organism directly; the host is
 optional:
 

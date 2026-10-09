@@ -1,0 +1,56 @@
+name: release
+
+# Push a tag like v0.2.0 to build the binaries and attach them to a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl   # fully static: no glibc dependency
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: musl toolchain
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build (default features — rule-based brain, no model needed)
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          name="evolua-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/evolua" "dist/$name"
+          (cd dist && shasum -a 256 "$name" > "$name.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
