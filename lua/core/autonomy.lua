@@ -157,27 +157,40 @@ function Autonomy:_enact(act, how)
     if self.ctx.modelmgr then self.ctx.modelmgr:set_index(act.tier) end
   elseif act.verb == "model_upgrade" then
     -- real acquisition via the Rust model_acquire binding; bounded to the
-    -- ladder's pinned url+sha. Absent binding/url → no-op + note.
+    -- ladder's pinned url+sha. Absent binding/url → no-op + note. A failure is
+    -- recorded so the model manager backs off instead of re-fetching ~500 MB at
+    -- every check.
+    local mm = self.ctx.modelmgr
     local acquire = rawget(_G, "model_acquire")
     if acquire and act.url and act.file then
-      local dest = (self.ctx.modelmgr and self.ctx.modelmgr.models_dir or ".") .. "/" .. act.file
+      local dest = (mm and mm.models_dir or ".") .. "/" .. act.file
       self:audit(string.format("model_upgrade: fetching %s (%dMB) → %s",
         act.tier_name or "?", act.approx_mb or 0, dest))
       local pok, got = pcall(acquire, act.url, dest, act.sha)
       if pok and got then
-        if self.ctx.modelmgr then self.ctx.modelmgr:set_index(act.tier) end
+        if mm then
+          mm:record_upgrade(mm:current_index(), act.tier, mm:fallback_rate())
+          mm:set_index(act.tier)
+        end
         -- new brain in place (loads next life); clear the bottleneck samples so
         -- we re-judge it fresh instead of re-downloading on the next check.
         local c = self.ctx.memory.data.counters
         if c then c.llm_ok = 0; c.llm_fallback = 0 end
         self:audit(string.format("model_upgrade: ACQUIRED %s — active next life", act.tier_name or "?"))
       else
-        self:audit(string.format("model_upgrade: acquisition FAILED for %s (%s)",
-          act.tier_name or "?", tostring(got)))
+        local why = pok and "download or checksum failed" or tostring(got)
+        if mm and act.tier then mm:record_failure(act.tier, why) end
+        self:audit(string.format("model_upgrade: acquisition FAILED for %s (%s)", act.tier_name or "?", why))
       end
     else
+      -- nothing to retry with in this life (no binding / no pinned url)
+      if mm and act.tier then mm.locked[act.tier] = "no acquire binding/url" end
       self:audit("model_upgrade skipped: no acquire binding/url (build with --features acquire)")
     end
+  elseif act.verb == "model_rollback" then
+    local ok, what = false, "no model manager"
+    if self.ctx.modelmgr then ok, what = self.ctx.modelmgr:rollback() end
+    self:audit(string.format("model_rollback: %s (%s)", ok and "DONE — active next life" or "skipped", tostring(what)))
   end
   self:audit(string.format("ENACTED(%s) %s target=%s", how or "?", act.verb,
     tostring(act.target_pid or act.tier_name or "-")))

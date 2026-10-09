@@ -47,7 +47,7 @@ return {
   -- --unattended (or EVOLUA_UNATTENDED=1) sets autonomy_ceiling = "act",
   -- model_unattended = true and safe-lists model_upgrade, in one switch.
   autonomy_ceiling = "report",   -- learn | report | notify | suggest | act
-  safe_actions     = { "throttle", "notify", "model_downgrade" }, -- reversible verbs allowed at L4
+  safe_actions     = { "throttle", "notify", "model_downgrade", "model_rollback" }, -- reversible verbs allowed at L4
   suggest_min_conf = 0.6,        -- min confidence to file an approval suggestion
   act_min_conf     = 0.85,       -- min confidence for autonomous (L4) action
   -- evolved-organ actions (rule-DSL "act"): routed through the SAME ladder as the
@@ -65,6 +65,8 @@ return {
   model_force_upgrade = false,   -- opt-in: always treat the brain as upgradeable (skip bottleneck test)
   model_ignore_battery= false,   -- opt-in: allow acquisition while on battery
   model_check_every   = 50,      -- reconsider the model every N ticks
+  model_retry_secs    = 3600,    -- after a failed acquisition, wait this long (doubling per failure; not within one life)
+  model_max_attempts  = 3,       -- give a tier up after this many failed acquisitions
   model_headroom      = 0.7,     -- only claim this fraction of available RAM
   model_min_samples   = 10,      -- reasoner samples before judging a bottleneck
   model_fallback_rate = 0.4,     -- rule-fallback rate above which the model is "too weak"

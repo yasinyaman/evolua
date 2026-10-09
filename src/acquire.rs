@@ -20,13 +20,32 @@ pub fn download(url: &str, dest: &Path, sha256: Option<&str>) -> anyhow::Result<
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    let tmp = dest.with_extension("part");
+    // a failed or interrupted fetch never leaves a half-written .part behind
+    if let Err(e) = fetch_verified(url, &tmp, sha256) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+
+    // keep the previous model as <name>.prev (the Lua `model_rollback` verb puts
+    // it back), then swap in atomically
+    if dest.exists() {
+        let bak = dest.with_extension("prev");
+        let _ = std::fs::rename(dest, &bak);
+    }
+    std::fs::rename(&tmp, dest)?;
+    Ok(())
+}
+
+/// Stream `url` into `tmp`, hashing as it goes; error on an empty body or a
+/// checksum mismatch.
+fn fetch_verified(url: &str, tmp: &Path, sha256: Option<&str>) -> anyhow::Result<()> {
     let resp = ureq::get(url)
         .timeout(std::time::Duration::from_secs(600))
         .call()?;
     let mut reader = resp.into_reader();
 
-    let tmp = dest.with_extension("part");
-    let mut f = std::fs::File::create(&tmp)?;
+    let mut f = std::fs::File::create(tmp)?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 1 << 16];
     let mut total: u64 = 0;
@@ -43,22 +62,13 @@ pub fn download(url: &str, dest: &Path, sha256: Option<&str>) -> anyhow::Result<
     drop(f);
 
     if total == 0 {
-        let _ = std::fs::remove_file(&tmp);
         anyhow::bail!("empty download from {url}");
     }
     if let Some(expect) = sha256 {
         let got = format!("{:x}", hasher.finalize());
         if !got.eq_ignore_ascii_case(expect) {
-            let _ = std::fs::remove_file(&tmp);
             anyhow::bail!("checksum mismatch: expected {expect}, got {got}");
         }
     }
-
-    // keep the previous model as a rollback copy, then swap in atomically
-    if dest.exists() {
-        let bak = dest.with_extension("prev");
-        let _ = std::fs::rename(dest, &bak);
-    }
-    std::fs::rename(&tmp, dest)?;
     Ok(())
 }
