@@ -39,9 +39,14 @@ blueprint'leri):
 spawned organ 'gen_colony_1'     from <colony>
 spawned organ 'gen_explorer_1'   from <explorer>
 spawned organ 'gen_supervisor_1' from <supervisor>
-spawned organ 'gen_supervisor_2' from <supervisor>   ← evrim daha şimdiden 2 varyant üretti
-spawned organ 'gen_supervisor_3' from <supervisor>     (en zinde organ, max_per_template tavanında)
+spawned organ 'gen_supervisor_2' from <supervisor>   ← kopyalar: hata, aşağıdaki nota bak
+spawned organ 'gen_supervisor_3' from <supervisor>
 ```
+
+> Bu kayıt, korumalı organların tekil hale gelmesinden öncedir. Fazladan iki süpervizör, kendi
+> yaydığı `host.vitals` uyaranını işleyerek liderlik tablosunun tepesine çıkan bir organın
+> mutasyon kopyalarıydı. Güncel bir koşu tam bir colony, explorer ve supervisor tohumlar; bus da
+> bir organa kendi yaydığı uyarandan kredi vermez.
 
 ## 2. Algı — varlık-bazlı dünya modeli
 

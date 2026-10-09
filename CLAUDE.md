@@ -224,6 +224,10 @@ philosophy) that's isolated enough not to clobber core globals, wires its subscr
   `url`+`sha256`, and `model_acquire` downloads it — verified end-to-end in both **unattended**
   (L4 acts directly) and **approval-gated** (L3 → approval inbox → `poll_approvals` enacts) modes.
   The organism chooses *when* to fetch, never *what* (the pinned url+sha bound it to a vetted file).
+  A failed fetch locks that tier for the life and backs off exponentially across lives
+  (`model_retry_secs`, `model_max_attempts`). An upgrade is recorded with the fallback rate it
+  replaced; if the new brain falls back more, `model_rollback` restores `<name>.prev`. A model that
+  fails to *load* is not detected yet (the reasoner silently runs on rules).
   Opt-in `model_force_upgrade` / `model_ignore_battery` override the bottleneck/power guards (off
   by default). Note: macOS available-RAM is `free + inactive + speculative + purgeable` pages
   (`hostcaps.lua`) — "Pages free" alone reads near-zero and would block every upgrade.

@@ -58,7 +58,7 @@ lua lua/main.lua --ticks 60 --tick-seconds 0.2
 | **1 · Keskin algı** | süreç-başına CPU/RAM (`proc_top`), OS çökme/hata logları (`proc_errors`), varlık-bazlı **dünya modeli**, kural-tabanlı durum raporları |
 | **2 · Karar beyni** | gömülü minik model (SmolLM2-135M) tüm-sistem snapshot'ını **anlamlandırır**; fitness-ağırlıklı **BM25 RAG** ile öğrenir; model yoksa kurala düşer |
 | **3 · Otonomi + merak** | **L0–L4 merdiveni**, dosya tabanlı **onay inbox**, güvenli-liste + geri-alınabilirlik + denetim günlüğü, `curiosity` aktif keşif |
-| **4 · Meta-evrim** | host'u ölçer (`hostcaps`), beyin darboğaz + kapasite varsa **model merdiveninde** tırmanır; indirme + checksum + rollback |
+| **4 · Meta-evrim** | host'u ölçer (`hostcaps`), beyin darboğaz + kapasite varsa **model merdiveninde** tırmanır; indirme + checksum; başarısız indirme her kontrolde tekrarlanmaz, geri çekilir; yeni beyin kurallara daha sık düşerse **rollback** önceki modeli geri getirir |
 | **5 · Koloni, süpervizör, amaç, keşif** | **kendini çoğaltma**; akıllı **ne zaman bölünmeli** kararı; host-tarafı **süpervizör**; **amaç edinme** (koloni hangi amacın ödül getirdiğini öğrenir); ve **ortam keşfi** (kendi duyularını büyütür) |
 
 Faz 1–4 özgün organizma; **Faz 5** derinlemesine [docs/COLONY.md](docs/COLONY.md)'de.
@@ -169,7 +169,7 @@ bir organ olamazlar). Kural grameri ise `templates.lua`'da (blueprint katmanı) 
 | `src/supervisor.rs` | host-tarafı otonom gözcü ("beyin sapı"): canlılık + vitals, asla zorlamaz |
 | `src/host.rs` | yerel dosya-sistemi yardımcıları (listele / dolaş / mkdir / cwd); algı yolları shell komutuna girmez |
 | `src/llm.rs` | gömülü karar beyni (llama-cpp-2 CPU) — `llm`/`embed_smol` feature |
-| `src/acquire.rs` | GGUF indirme + SHA-256 + atomik takas + rollback — `acquire` feature |
+| `src/acquire.rs` | GGUF indirme + SHA-256 + atomik takas; eski dosyayı rollback için `.prev` olarak saklar — `acquire` feature |
 | `lua/core/kernel.lua` | yaşam döngüsü / tick loop; ödül-ceza → fitness |
 | `lua/core/bus.lua` | event bus (pub/sub) — sinir sistemi; olay-başına istatistik |
 | `lua/core/memory.lua` | yaşamlar-arası kalıcı bellek; fitness, nesil, sayaçlar |

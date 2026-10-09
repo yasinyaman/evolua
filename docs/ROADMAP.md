@@ -270,7 +270,12 @@ Descends on: OOM risk, high latency, battery/thermal, or if the larger model's f
   and checksum + disk + power checks pass.
 - **Safety:** disk/RAM check before download; GGUF **checksum/signature verification**; no download on
   battery; bandwidth awareness.
-- **Rollback:** the previous model is kept; if the new one fails to load or is low-fitness, **revert**.
+- **Rollback:** `acquire` keeps the previous model as `<name>.prev`. Once the upgraded brain has
+  `model_min_samples` decisions, a higher rule-fallback rate than before the upgrade proposes
+  `model_rollback` (safe-listed; also accepted from the approval inbox), which restores `.prev`
+  and backs off the rolled-back tier. A failed download is locked for the life and retried with
+  exponential back-off across lives. Not yet handled: a downloaded model that fails to *load* —
+  the reasoner then runs on rules alone and nothing proposes the rollback.
 - **Audit log:** every model change (tier, reason, confidence) is logged.
 
 ### GPU: "GPU if present, else CPU" — three scenarios by backend

@@ -66,7 +66,7 @@ lua lua/main.lua --goal "log filesystem changes"
 | **1 · Sharp perception** | per-process CPU/RAM (`proc_top`), OS crash/error logs (`proc_errors`), an entity-based **world model**, rule-based situational reports |
 | **2 · Decision brain** | embedded tiny model (SmolLM2-135M) **interprets** a whole-system snapshot; learns from its own experience via a fitness-weighted **BM25 RAG**; falls back to rules when no model resolves |
 | **3 · Autonomy + curiosity** | the **L0–L4 ladder** (learn → report → notify → suggest → act), a file-based **approval inbox**, safe-list + reversibility + audit log, `curiosity`-driven active exploration |
-| **4 · Meta-evolution** | probes the host (`hostcaps`) and climbs a **model ladder** when the brain is a bottleneck and there's spare capacity; download + checksum + rollback (opt-in `acquire`) |
+| **4 · Meta-evolution** | probes the host (`hostcaps`) and climbs a **model ladder** when the brain is a bottleneck and there's spare capacity; download + checksum (opt-in `acquire`); a failed fetch backs off instead of retrying every check; **rollback** restores the previous model when the new one falls back to rules more often |
 | **5 · Colony, supervisor, purpose, exploration** | **self-replication** into a colony of communicating processes; an intelligent **when-to-split** decision (load + capacity); a host-side **supervisor** ("brainstem"); **goal acquisition** — offspring born specialized to a crystallized purpose, with the colony learning which purposes pay; and **environment exploration** — the organism scouts the host and grows its own senses |
 
 Phases 1–4 are the original organism; **Phase 5 is the colony/supervisor/purpose layer**
@@ -185,7 +185,7 @@ templates — it is a genuine genetic system. (Design rationale + verification:
 | Mechanism | What it does |
 |---|---|
 | **Honest fitness** | reward is derived from *observable bus facts* — filling a starved stimulus (surprise) ÷ co-handlers (anti-redundancy sharing) − measured cost (parsimony) — **not** the number an organ declares about itself. Breaks reward-hacking (e.g. the colony minting its own reward each heartbeat). |
-| **Tournament + soft death** | k-tournament breeding (not just the single fittest) and probabilistic culling preserve diversity; seeded-infrastructure lineages (colony/supervisor/explorer) are exempt from culling. |
+| **Tournament + soft death** | k-tournament breeding (not just the single fittest) and probabilistic culling preserve diversity; seeded-infrastructure organs (colony/supervisor/explorer) are singletons, exempt from culling and never duplicated. |
 | **Rule-DSL / genetic programming** | a `rule` organ's genome is a typed rule list — `when <stimulus> if <field> <op> <value> then <report\|log\|emit\|act>`. Mutation rewrites the stimulus/field/op/value/action and adds/removes rules; crossover recombines two parents. The grammar emits **only safe primitives** (no `os`/`io`) — structurally **capability-isolated**, so structure can evolve while staying safe. |
 | **Quality-Diversity (MAP-Elites)** | a behavior archive keeps the best organ per niche (primary stimulus × subscription breadth); cell elites are protected and breeding can *illuminate* empty niches — a **repertoire of competents**, not convergence onto one peak. |
 | **Self-adaptive (ES) mutation** | each numeric gene carries its own log-normally-mutated step size (`sigma`), inherited across generations — the lineage learns *how much* to mutate each gene. |
@@ -231,7 +231,7 @@ table (`bus`, `memory`, `registry`, `evolver`, `worldmodel`, `reasoner`, `autono
 | `src/supervisor.rs` | host-side autonomic watch (the "brainstem"): liveness + vitals, never enforces |
 | `src/host.rs` | native filesystem helpers (list / walk / mkdir / cwd) so perception never builds shell commands from paths |
 | `src/llm.rs` | embedded decision brain (llama-cpp-2 CPU) — `llm`/`embed_smol` feature |
-| `src/acquire.rs` | GGUF download + SHA-256 + atomic swap + rollback — `acquire` feature |
+| `src/acquire.rs` | GGUF download + SHA-256 + atomic swap, keeping the old file as `.prev` for rollback — `acquire` feature |
 | `lua/core/kernel.lua` | life cycle / tick loop; reward/error feedback → fitness |
 | `lua/core/bus.lua` | event bus (pub/sub) — the nervous system; per-event stats |
 | `lua/core/memory.lua` | persistent cross-life memory; fitness, generation, counters |

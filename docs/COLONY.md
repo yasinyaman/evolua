@@ -40,6 +40,10 @@ seeds it, or directed mode grows the first one by goal keyword.
 | colony size | `clone_max_peers` | counted from live beacons before each split |
 | cooldown | `colony/clone.lock` | a colony-wide rate limit, checked + acquired atomically-ish |
 
+The three bounds assume one replicator per instance, and that now holds: the colony organ is a
+protected singleton, so no drive can grow a second one (earlier versions let the bandit and
+mutation copy it up to `max_per_template = 3`, and a two-colony run handled every ping twice).
+
 Children are **mortal** (`clone_child_ticks`, then they rest) and only the root divides — a
 star colony, not a tree. The safety caps live in `config.lua` and are **not genes**, so no gene
 change can loosen the *bounds* (the colony's own genes — its comms/clone cadences — keep their
