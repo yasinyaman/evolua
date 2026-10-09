@@ -9,7 +9,9 @@
 #
 # The Lua organism (lua/) is embedded into the binary via rust-embed and runs in
 # an in-process mlua (Lua 5.4, vendored & statically linked) VM. No external lua
-# interpreter, no shared libs — one file you can copy anywhere.
+# interpreter. A normal build links only system libraries (glibc on Linux,
+# /usr/lib on macOS); for a fully static Linux binary build the musl target, as
+# the release workflow does: --target x86_64-unknown-linux-musl (needs musl-tools).
 [package]
 name = "evolua"
 version = "0.1.0"

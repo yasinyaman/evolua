@@ -34,8 +34,11 @@ cargo build --release --features 'embed_smol acquire'   # + runtime model yükse
 ./target/release/evolua                                      # süresiz yaşar
 ```
 
-Etiketli sürümler (`v*`) Linux x86_64 (statik, musl) ve macOS (arm64, x86_64) için varsayılan
-özellikli hazır binary'ler ekler — bkz. `.github/workflows/release.yml`.
+Lua binary'ye statik gömülüdür; bunun dışında yalnızca sistem kütüphanelerine bağlanır (Linux'ta
+glibc, macOS'ta /usr/lib). Tamamen statik bir Linux binary'si için:
+`rustup target add x86_64-unknown-linux-musl && cargo build --release --target x86_64-unknown-linux-musl`
+(`musl-tools` gerekir). Etiketli sürümler (`v*`) Linux x86_64 (statik, musl) ve macOS (arm64,
+x86_64) için varsayılan özellikli hazır binary'ler ekler — bkz. `.github/workflows/release.yml`.
 
 **Derlemeden çalıştır** — stok bir `lua` (5.3+) organizmayı doğrudan koşar:
 

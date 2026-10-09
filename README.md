@@ -38,8 +38,11 @@ cargo build --release --features 'embed_smol gpu-metal' # macOS GPU backend
 ./target/release/evolua --help                               # all flags
 ```
 
-Tagged releases (`v*`) attach prebuilt default-feature binaries for Linux x86_64 (static, musl)
-and macOS (arm64, x86_64) — see `.github/workflows/release.yml`.
+Lua is statically linked into the binary; otherwise it links only system libraries (glibc
+on Linux, /usr/lib on macOS). For a fully static Linux binary:
+`rustup target add x86_64-unknown-linux-musl && cargo build --release --target x86_64-unknown-linux-musl`
+(needs `musl-tools`). Tagged releases (`v*`) attach prebuilt default-feature binaries for Linux
+x86_64 (static, musl) and macOS (arm64, x86_64) — see `.github/workflows/release.yml`.
 
 **Run without building** — a stock `lua` (5.3+) runs the organism directly; the host is
 optional:
