@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# Check every pinned model in the ladder (lua/core/modelmgr.lua) against the
-# sha256 Hugging Face publishes for that file — the `x-linked-etag` header of
-# its resolve URL (the LFS object id). Nothing is downloaded. Run it before
-# changing a pin, or in CI to catch an upstream re-upload.
+# Check every pinned model — the ladder in lua/core/modelmgr.lua and the
+# embed_smol model in scripts/fetch_model.sh — against the sha256 Hugging Face
+# publishes for that file: the `x-linked-etag` header of its resolve URL (the
+# LFS object id). Nothing is downloaded. Run it before changing a pin, or in CI
+# to catch an upstream re-upload.
 #
 #   scripts/verify_model_pin.sh        # exit 0 = every pin matches
 set -u
 cd "$(dirname "$0")/.."
 LADDER=lua/core/modelmgr.lua
+FETCH=scripts/fetch_model.sh
 
-pairs=$(awk -F'"' '/url = "/ { u = $2 } /sha = "/ { if (u != "") print u, $2; u = "" }' "$LADDER")
+pairs=$( { awk -F'"' '/url = "/ { u = $2 } /sha = "/ { if (u != "") print u, $2; u = "" }' "$LADDER"
+           awk -F'"' '/^ *URL="/ { u = $2 } /^ *SHA="/ { if (u != "") print u, $2; u = "" }' "$FETCH"; } )
 if [ -z "$pairs" ]; then
-  echo "no pinned url+sha pairs found in $LADDER"
+  echo "no pinned url+sha pairs found in $LADDER or $FETCH"
   exit 1
 fi
 

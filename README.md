@@ -27,6 +27,7 @@ the organism's vitals and feeds them back — it watches, it never steers (see b
 ```bash
 # Build the single binary (Lua organism is embedded via rust-embed; mlua 5.4 vendored).
 cargo build --release                                   # perception + rules (no LLM)
+scripts/fetch_model.sh                                  # models/smol.gguf for embed_smol (sha256-checked)
 cargo build --release --features embed_smol             # + embedded decision brain
 cargo build --release --features 'embed_smol acquire'   # + runtime model upgrade
 cargo build --release --features 'embed_smol gpu-metal' # macOS GPU backend

@@ -25,6 +25,7 @@ Tek kasıtlı istisna, organizmanın vital'lerini gözleyip geri besleyen ince, 
 
 ```bash
 cargo build --release                                   # algı + kurallar (LLM yok)
+scripts/fetch_model.sh                                  # embed_smol için models/smol.gguf (sha256 doğrulamalı)
 cargo build --release --features embed_smol             # + gömülü karar beyni
 cargo build --release --features 'embed_smol acquire'   # + runtime model yükseltme
 

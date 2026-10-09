@@ -49,8 +49,10 @@ cargo build --release --features 'embed_smol gpu-metal' # macOS GPU backend
 ```
 
 **Build prerequisite for LLM features:** `embed_smol` does `include_bytes!("../models/smol.gguf")`
-at compile time. That file is **not in the repo** — `models/smol.gguf` must exist or the build
-fails. Plain `cargo build --release` has no such dependency. At runtime the model resolves as:
+at compile time. That file is **not in the repo** — run `scripts/fetch_model.sh` first (downloads
+the pinned SmolLM2-135M-Instruct Q8_0 and checks its sha256), or the build fails. Plain
+`cargo build --release` has no such dependency. `scripts/verify_model_pin.sh` checks every
+pinned model (this one and the ladder's) against Hugging Face without downloading. At runtime the model resolves as:
 `$EVOLUA_MODEL` → `<home>/models/decision.gguf` → embedded. If none resolve, the reasoner
 gracefully falls back to rules.
 

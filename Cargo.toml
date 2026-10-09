@@ -50,7 +50,8 @@ sha2 = { version = "0.10", optional = true }
 default = []
 # Embedded LLM decision brain (in-process llama.cpp, CPU).
 llm = ["dep:llama-cpp-2", "dep:encoding_rs"]
-# Bake the tiny model into the binary (expects evolua/models/smol.gguf). Implies `llm`.
+# Bake the tiny model into the binary (expects models/smol.gguf — run
+# scripts/fetch_model.sh first). Implies `llm`.
 embed_smol = ["llm"]
 
 # Faz 4 — runtime model acquisition (download + checksum). Exposes model_acquire.
