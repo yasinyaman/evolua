@@ -91,7 +91,9 @@ Paylaşılan `$EVOLUA_HOME/colony/` dizini üzerinden her örnek bir varlık bea
 kutusunu boşaltır ve canlı eşlere ping atar. `--clone` ile gerçek OS-süreç klonları doğurur;
 **fork-bomb'a karşı üç katmanlı sınırla** (nesil derinliği, koloni boyutu, koloni-geneli
 cooldown kilidi). Çocuklar **ölümlü** ve `--no-clone` ile açılır — yalnız kök bölünür.
-Güvenlik sınırları **gen değil**, `config.lua`'da.
+Güvenlik sınırları **gen değil**, `config.lua`'da; hiçbir gen değişikliği onları gevşetemez.
+Koloni organının kendisi korumalı bir tekil organdır: evrimcinin tek spawn kapısı hiçbir sürüşten
+ikinci bir kopyaya izin vermez, `--no-colony` ise onu yaşam boyunca kapatır.
 
 ### Ne zaman bölünmeli bir karardır
 Sırf yer var diye bölünmez. Yalnız gerçek **yük** altında (karşılanmayan ihtiyaç / beyin
@@ -159,20 +161,34 @@ bir organ olamazlar). Kural grameri ise `templates.lua`'da (blueprint katmanı) 
 `package.preload`'a kaydeder, veri evini çözer, süpervizör thread'ini doğurur ve global'leri
 (`EVOLUA_HOME`, `arg`, ve feature açıksa `llm_complete`/`model_acquire`) enjekte eder.
 
+### Dosyalar
+
 | Dosya | Rol |
 |---|---|
-| `src/main.rs` | tek-binary host |
-| `src/supervisor.rs` | host-tarafı otonom gözcü ("beyin sapı") |
+| `src/main.rs` | tek-binary host: `lua/` kaynağını gömer, veri evini çözer, global'leri enjekte eder, süpervizörü doğurur |
+| `src/supervisor.rs` | host-tarafı otonom gözcü ("beyin sapı"): canlılık + vitals, asla zorlamaz |
 | `src/host.rs` | yerel dosya-sistemi yardımcıları (listele / dolaş / mkdir / cwd); algı yolları shell komutuna girmez |
-| `src/llm.rs` · `src/acquire.rs` | gömülü karar beyni · model indirme |
+| `src/llm.rs` | gömülü karar beyni (llama-cpp-2 CPU) — `llm`/`embed_smol` feature |
+| `src/acquire.rs` | GGUF indirme + SHA-256 + atomik takas + rollback — `acquire` feature |
 | `lua/core/kernel.lua` | yaşam döngüsü / tick loop; ödül-ceza → fitness |
-| `lua/core/bus.lua` | event bus — sinir sistemi |
-| `lua/core/templates.lua` | **genom blueprint'leri**; **rule-DSL/GP** organı + `colony`, `supervisor`, `explorer` |
-| `lua/core/evolver.lua` | evrim motoru: ihtiyaç/hedef/**bandit** üretim, **turnuva** + yumuşak ölüm, **MAP-Elites**, **ES** mutasyon, **crossover** |
-| `lua/core/evo_util.lua` | paylaşılan evrim operatörleri (gauss + öz-uyarlanan ES adımı) |
-| `lua/core/{worldmodel,reasoner,rag,autonomy,hostcaps,modelmgr,platform,reporter}.lua` | dünya modeli · anlamlandırma · RAG · otonomi · host probu · model merdiveni · OS soyutlaması · raporlayıcı |
+| `lua/core/bus.lua` | event bus (pub/sub) — sinir sistemi; olay-başına istatistik |
+| `lua/core/memory.lua` | yaşamlar-arası kalıcı bellek; fitness, nesil, sayaçlar |
+| `lua/core/serialize.lua` | tek serileştirici: bellek, organ genleri, kalıtılan genomlar |
+| `lua/core/registry.lua` | plugin yükleyici + sandbox + hot-reload + emeklilik |
+| `lua/core/templates.lua` | **genom blueprint'leri** — organ kaynağını üretir; **rule-DSL/GP** organı + `colony`, `supervisor`, `explorer` |
+| `lua/core/evolver.lua` | evrim motoru: ihtiyaç/hedef/**bandit** üretim, **turnuva** seçilimi + yumuşak ölüm, **MAP-Elites** arşivi, **ES** mutasyon, **crossover**, dürüst-fitness sıralaması |
+| `lua/core/evo_util.lua` | paylaşılan evrim operatörleri (Box–Muller gauss + öz-uyarlanan ES adımı) |
+| `lua/core/worldmodel.lua` | varlık (süreç-başına) dosyaları: CPU/hata/sıcaklık/eğilim/salience |
+| `lua/core/reasoner.lua` | anlamlandırma: snapshot → karar şeması (LLM+RAG, kural yedeği) |
+| `lua/core/rag.lua` | fitness-ağırlıklı BM25 deneyim bankası |
+| `lua/core/autonomy.lua` | L0–L4 merdiveni + onay kutusu + güvenli-liste + denetim logu; **evrilen organ aksiyon istekleri + sonuç-kredisi** |
+| `lua/core/hostcaps.lua` | host ölçümü (RAM/çekirdek/güç/disk) |
+| `lua/core/modelmgr.lua` | meta-evrim: model merdiveni + kapasite/ihtiyaç kararı + geri alma |
+| `lua/core/platform.lua` | OS soyutlaması (mac/linux/win): süreç listesi, hata logları, aktüatörler, shell tırnaklama, dosya-sistemi dolaşma |
+| `lua/core/reporter.lua` | aktüatör: durum özeti + gözlemler → Markdown raporlar |
 | `lua/sensors/*.lua` | `sys_metrics`, `logwatch`, `fswatch`, `introspect`, `proc_top`, `proc_errors`, `curiosity` |
-| `lua/config.lua` · `lua/main.lua` | içgüdüler (sayılar) · giriş noktası/CLI/tohumlama |
+| `lua/config.lua` | tüm "içgüdüler" düz sayılar olarak (eşikler, kadanslar, sınırlar, koloni/amaç) |
+| `lua/main.lua` | giriş noktası + CLI bayrak ayrıştırıcı + organ tohumlama |
 
 ---
 

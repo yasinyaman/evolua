@@ -10,8 +10,9 @@ supervisor thread, which is the single deliberate exception (see below).
 ## 1. The colony — communication first
 
 A single seeded `colony` organ gives the organism a sense of **siblings**. It needs no core
-changes; it is seeded once by `main.lua` (idempotent across lives) and is otherwise a normal
-organ subject to mutation and selection.
+changes; it is seeded once by `main.lua` (idempotent across lives) and is a **protected
+singleton**: exempt from culling, never copied by mutation, illumination or the bandit, and
+re-rendered from its blueprint each life so blueprint fixes reach it.
 
 Two behaviors, both via a shared filesystem dir `$EVOLUA_HOME/colony/`:
 
@@ -24,9 +25,12 @@ Two behaviors, both via a shared filesystem dir `$EVOLUA_HOME/colony/`:
   `--colony-root`.
 
 The organ listens on the real clock (`self.heartbeat`) but its template `triggers` field is the
-synthetic `"colony.tick"` (never emitted) — so the evolver's free-drive can **never** grow a
-self-replicator by accident. It only exists because `main.lua` seeds it, or directed mode grows
-it by goal keyword.
+synthetic `"colony.tick"` (never emitted), so the free drive never picks it. The guarantee that
+no drive grows a self-replicator by accident is `Evolver:spawn()`, the one gate every drive
+passes: it refuses a second living colony (protected singleton), the bandit skips protected
+templates, and `--no-colony` puts it in `cfg.disabled_templates`, which spawn refuses for the
+whole life (an old copy on disk isn't even loaded). So the colony exists only because `main.lua`
+seeds it, or directed mode grows the first one by goal keyword.
 
 ### Replication is triply bounded — it can never fork-bomb
 
@@ -37,8 +41,9 @@ it by goal keyword.
 | cooldown | `colony/clone.lock` | a colony-wide rate limit, checked + acquired atomically-ish |
 
 Children are **mortal** (`clone_child_ticks`, then they rest) and only the root divides — a
-star colony, not a tree. The safety caps live in `config.lua` and are **not genes**, so
-mutation can tune the comms/clone *cadences* but never loosen the *bounds*.
+star colony, not a tree. The safety caps live in `config.lua` and are **not genes**, so no gene
+change can loosen the *bounds* (the colony's own genes — its comms/clone cadences — keep their
+seeded values, since protected organs don't mutate).
 
 ## 2. When to split is a decision
 

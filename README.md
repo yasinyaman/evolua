@@ -104,8 +104,9 @@ mailbox (emitting a `colony.message` stimulus per message), and pings live peers
 clones** of itself, **triply bounded so it can never fork-bomb**: clone depth
 (`clone_max_generation`), colony size (`clone_max_peers`), and a colony-wide cooldown lock.
 Children are **mortal** (`clone_child_ticks`) and launched `--no-clone` — only the root
-divides (a star colony). The safety caps live in `config.lua`, **not in genes**, so mutation
-can tune the cadences but never loosen the bounds.
+divides (a star colony). The safety caps live in `config.lua`, **not in genes**, so no gene
+change can loosen them. The colony itself is a protected singleton: the evolver's single spawn
+gate refuses a second copy from any drive, and `--no-colony` switches it off for the whole life.
 
 ### When to split is a decision (not just "if there's room")
 
@@ -234,6 +235,7 @@ table (`bus`, `memory`, `registry`, `evolver`, `worldmodel`, `reasoner`, `autono
 | `lua/core/kernel.lua` | life cycle / tick loop; reward/error feedback → fitness |
 | `lua/core/bus.lua` | event bus (pub/sub) — the nervous system; per-event stats |
 | `lua/core/memory.lua` | persistent cross-life memory; fitness, generation, counters |
+| `lua/core/serialize.lua` | the one serializer: memory, organ genes, inherited genomes |
 | `lua/core/registry.lua` | plugin loader + sandbox + hot-reload + retirement |
 | `lua/core/templates.lua` | **genome blueprints** — render organ source; the **rule-DSL/GP** organ + `colony`, `supervisor`, `explorer` |
 | `lua/core/evolver.lua` | evolution engine: need/goal/**bandit** growth, **tournament** selection + soft death, **MAP-Elites** archive, **ES** mutation, **crossover**, honest-fitness ranking |
@@ -243,7 +245,7 @@ table (`bus`, `memory`, `registry`, `evolver`, `worldmodel`, `reasoner`, `autono
 | `lua/core/rag.lua` | fitness-weighted BM25 experience bank |
 | `lua/core/autonomy.lua` | the L0–L4 ladder + approval inbox + safe-list + audit log; **evolved-organ action requests + outcome-credit** |
 | `lua/core/hostcaps.lua` | host probe (RAM/cores/power/disk) |
-| `lua/core/modelmgr.lua` | meta-evolution: model ladder + capacity/need decision |
+| `lua/core/modelmgr.lua` | meta-evolution: model ladder + capacity/need decision + rollback |
 | `lua/core/platform.lua` | OS abstraction (mac/linux/win): process list, error logs, actuators, shell quoting, filesystem walk |
 | `lua/core/reporter.lua` | actuator: status summary + observations → Markdown reports |
 | `lua/sensors/*.lua` | `sys_metrics`, `logwatch`, `fswatch`, `introspect`, `proc_top`, `proc_errors`, `curiosity` |

@@ -243,7 +243,8 @@ via the colony, new purposes (exploration feeds goal-acquisition). It explores *
 data home and huge/VCS dirs — `target/`, `.git`, `node_modules`, … — are skipped) within
 `cfg.explore_roots` (default: data home + cwd), capped by `explore_max_watch`. `triggers` is the
 synthetic `"explore.tick"`; seeded in `main.lua`. Read-only; `--no-explorer` / `--no-explore-expand`
-/ `--explore-root` tune it. Like colony/supervisor, it's a normal organ subject to mutation/selection.
+/ `--explore-root` tune it. Like colony/supervisor, it's a protected singleton: cull-exempt, never
+copied, and re-rendered from its blueprint when that changes (`Evolver:rehydrate`).
 
 ### The colony — self-replication + peer communication
 
@@ -262,9 +263,11 @@ Two behaviors, both via a shared filesystem dir `$EVOLUA_HOME/colony/`:
   (`clone_max_generation`), colony size (`clone_max_peers`), and a colony-wide cooldown lock
   (`colony/clone.lock`). Children are **mortal** (`clone_child_ticks` then they rest) and launched
   with `--no-clone` — only the root replicates (a star colony). The SAFETY caps live in `config.lua`
-  (NOT in genes) so mutation can tune the comms/clone *cadences* but never loosen the *bounds*.
-  `triggers = "colony.tick"` is synthetic (never emitted) precisely so the evolver's free-drive can
-  never grow a self-replicator by accident.
+  (NOT in genes) so no gene change can loosen the *bounds*. `triggers = "colony.tick"` is synthetic
+  (never emitted) so the free drive never picks it, but the actual guarantee is `Evolver:spawn()`,
+  the one gate every drive (seed, directed, free, bandit, illumination, crossover, HGT, reasoner)
+  goes through: it refuses a second living protected organ and any template in
+  `cfg.disabled_templates` (`--no-colony` etc.), and the bandit skips protected templates.
   - **When to split is itself a decision** (mirrors the model ladder's "bottleneck + spare capacity"):
     by default (`clone_require_pressure`) the organism divides only under genuine **load** — unmet
     needs (bus `unhandled_streak`), reasoner brain-bottleneck (`llm_fallback` rate), or host **heat**
@@ -295,8 +298,9 @@ Two behaviors, both via a shared filesystem dir `$EVOLUA_HOME/colony/`:
     n=2"). So the colony evolutionarily keeps valuable purposes. `--no-purpose-learn` reverts to S1–S3.
 
 ⚠️ With `--clone` (or `clone_enabled = true`), a normal run spawns child *processes* on the host.
-Default is off. The colony organ is in `evolver.organs`, so it earns fitness from messaging/cloning
-and is itself subject to mutation — the capability self-improves.
+Default is off. The colony organ is in `evolver.organs`, so it earns fitness from handling
+heartbeats and cloning (not from the `colony.message` stimuli it emits itself — the bus gives no
+credit for an organ's own emits), but as a protected singleton it is never mutated or duplicated.
 
 ### Tuning
 

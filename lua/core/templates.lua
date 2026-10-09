@@ -137,12 +137,14 @@ T["vital_monitor"] = {
 -- instances through a shared filesystem "colony" dir, and (b) — ONLY when
 -- cfg.clone_enabled — spawns bounded, mortal OS-process clones of the organism.
 --
--- triggers="colony.tick" is synthetic (nothing ever emits it), so the evolver's
--- free-drive can never grow a self-replicator by accident; the organ is seeded
--- explicitly by main.lua, or grown in directed mode by a matching goal keyword.
--- It listens on the REAL clock (self.heartbeat) at runtime regardless. The
--- population SAFETY caps live in cfg (NOT in genes) so mutation can tune the
--- comms/clone cadences but can never loosen the bounds.
+-- triggers="colony.tick" is synthetic (nothing ever emits it), so the free drive
+-- never picks it. What keeps every OTHER drive from growing a self-replicator is
+-- the evolver's spawn gate: colony is `protected`, so a second living copy is
+-- refused (and the bandit skips it), and --no-colony disables the template for
+-- the whole life. It is seeded by main.lua, or its first copy grown in directed
+-- mode by a matching goal keyword. It listens on the REAL clock (self.heartbeat)
+-- at runtime regardless. The population SAFETY caps live in cfg (NOT in genes),
+-- so no gene change can loosen the bounds.
 T["colony"] = {
   triggers = "colony.tick",
   protected = true,   -- seeded infrastructure: exempt from culling (can't be regrown)
@@ -538,7 +540,8 @@ T["colony"] = {
 -- EVOLVABLE layer can react. It is advisory — it logs/reports, never enforces.
 -- In plain-Lua mode there is no host thread, so state/vitals never appears and the
 -- organ simply beats the heartbeat (harmless). triggers="supervisor.tick" is
--- synthetic (never emitted) so free-drive can't grow it; it is seeded in main.lua.
+-- synthetic (never emitted) so free-drive can't grow it; it is seeded in main.lua and,
+-- being protected, never duplicated (see the spawn gate in evolver.lua).
 T["supervisor"] = {
   triggers = "supervisor.tick",
   protected = true,   -- seeded infrastructure: exempt from culling (can't be regrown)
@@ -606,7 +609,7 @@ T["supervisor"] = {
 -- cfg.watch_dirs / cfg.watch_logs so fswatch/logwatch start perceiving them. New
 -- perception → new stimuli → organ growth → and (via the colony) new purposes.
 -- The macro complement to the per-process `curiosity` sensor. triggers is the
--- synthetic "explore.tick"; seeded in main.lua.
+-- synthetic "explore.tick"; seeded in main.lua; protected, so never duplicated.
 T["explorer"] = {
   triggers = "explore.tick",
   protected = true,   -- seeded infrastructure: exempt from culling (can't be regrown)
@@ -950,6 +953,7 @@ end
 T["rule"] = {
   triggers = "rule.tick",      -- synthetic: free-drive can't auto-grow it; it is
                                -- seeded once, then proliferates by mutation/crossover
+                               -- (and the bandit); --no-rule disables it at the spawn gate
   goal_keywords = { "kural", "rule", "refleks", "reflex" },   -- distinctive (no generic "behavior"/"evolve" that a user --goal would collide with)
   -- seed in the self.heartbeat "incubator" niche — alive on every platform (unlike
   -- macOS's /proc-based metric.cpu) so the organ survives long enough to DIFFERENTIATE
