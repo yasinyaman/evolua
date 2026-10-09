@@ -77,11 +77,8 @@ lua lua/main.lua --goal "watch filesystem changes"
 ```
 
 In plain-Lua mode the data home defaults to next to the script (so artifacts land under
-`lua/`); the binary uses an OS-appropriate dir. **Caveat:** `main.lua` reads `EVOLUA_HOME`
-as a Lua *global* (`rawget(_G, ...)`), not an env var — so `EVOLUA_HOME=/path lua lua/main.lua`
-is silently ignored. To redirect a plain-Lua run, inject it as a global:
-`lua -e "EVOLUA_HOME='/path'" lua/main.lua`. The env var works only in binary mode (the host
-sets the global) and for `clean.sh`.
+`lua/`); the binary uses an OS-appropriate dir. Both honor `EVOLUA_HOME=/path` (as does
+`clean.sh`); a Lua global (`lua -e "EVOLUA_HOME='/path'" …`) also works and wins over the env var.
 
 ### Tests & reset
 

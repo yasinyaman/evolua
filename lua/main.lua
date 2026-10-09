@@ -23,9 +23,11 @@ local cfg = require("config")
 
 -- Where the organism keeps its body parts & memory.
 --   * single-binary build: EVOLUA_HOME is injected by the host (an OS-appropriate
---     writable data dir, e.g. ~/Library/Application Support/EvoLua).
---   * plain `lua` run: fall back to the script directory.
-local BASE = (rawget(_G, "EVOLUA_HOME")) or HERE
+--     writable data dir, e.g. ~/Library/Application Support/EvoLua, or $EVOLUA_HOME).
+--   * plain `lua` run: a global EVOLUA_HOME (lua -e "EVOLUA_HOME='…'"), else the
+--     $EVOLUA_HOME env var — the same one clean.sh reads — else the script directory.
+local function nonempty(s) return s ~= nil and s ~= "" and s or nil end
+local BASE = nonempty(rawget(_G, "EVOLUA_HOME")) or nonempty(os.getenv("EVOLUA_HOME")) or HERE
 
 -- resolve relative state/perception paths against BASE, so the organism finds
 -- its body parts no matter the current working directory or launch method.

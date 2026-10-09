@@ -40,7 +40,7 @@ cargo build --release --features 'embed_smol acquire'   # + runtime model yükse
 lua lua/main.lua --ticks 60 --tick-seconds 0.2
 ```
 
-> Saf-Lua modunda veri evini bir global enjekte ederek yönlendir: `lua -e "EVOLUA_HOME='/yol'" lua/main.lua`.
+> Saf-Lua modunda veri evi varsayılan olarak betiğin yanındadır (`lua/`); binary'deki gibi yönlendir: `EVOLUA_HOME=/yol lua lua/main.lua`.
 
 ---
 

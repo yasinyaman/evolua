@@ -491,10 +491,9 @@ T["colony"] = {
             if win() then
               -- cmd strips the outermost quote pair, leaving: set "VAR=x"&& "prog" …
               cmd = 'cmd /c start "" /B cmd /c "set "EVOLUA_HOME=' .. chome .. '"&& ' .. shq(prog) .. flags .. '"'
-            elseif cfg.embedded then
-              cmd = 'EVOLUA_HOME=' .. shq(chome) .. ' ' .. shq(prog) .. flags .. ' >/dev/null 2>&1 &'
-            else
-              cmd = 'lua -e ' .. shq(string.format("EVOLUA_HOME=%q", chome)) .. ' ' .. shq(prog) .. flags .. ' >/dev/null 2>&1 &'
+            else   -- binary and plain Lua both read $EVOLUA_HOME
+              cmd = 'EVOLUA_HOME=' .. shq(chome) .. ' ' .. (cfg.embedded and "" or "lua ") ..
+                    shq(prog) .. flags .. ' >/dev/null 2>&1 &'
             end
             local reasons = {}
             if why.eager then reasons[#reasons + 1] = "eager" end

@@ -46,8 +46,8 @@ lua lua/main.lua --ticks 60 --tick-seconds 0.2
 lua lua/main.lua --goal "log filesystem changes"
 ```
 
-> In plain-Lua mode, redirect the data home by injecting it as a global (the env var is only
-> read in binary mode): `lua -e "EVOLUA_HOME='/path'" lua/main.lua`.
+> In plain-Lua mode the data home defaults next to the script (`lua/`); redirect it the same
+> way as the binary: `EVOLUA_HOME=/path lua lua/main.lua`.
 
 ---
 
@@ -277,8 +277,8 @@ colony/     peers/<id> beacons · inbox/<id>/ mailboxes · clone.lock · genepoo
 | Linux | `$XDG_DATA_HOME/evolua` or `~/.local/share/evolua/` |
 | Windows | `%APPDATA%\EvoLua\` |
 
-Override with `EVOLUA_HOME=/path ./evolua`. In plain-Lua mode the home defaults next to the
-script unless injected as a global.
+Override with `EVOLUA_HOME=/path ./evolua` (plain Lua reads the same variable). In plain-Lua
+mode the home otherwise defaults next to the script.
 
 ---
 
