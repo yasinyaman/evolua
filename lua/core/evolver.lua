@@ -5,6 +5,7 @@
 
 local Templates = require("core.templates")
 local EU        = require("core.evo_util")   -- shared ES kernel (gauss, es_step)
+local Log       = require("core.log")        -- rotating append for evolution.log
 
 local Evolver = {}
 Evolver.__index = Evolver
@@ -37,8 +38,13 @@ local function is_protected(template_key)
   return tpl and tpl.protected == true
 end
 
+-- names never repeat across lives: the per-template counter is persisted
+-- (memory.name_seq), because births — the other record of used names — is pruned
 local function unique_name(self, base)
   self.naming[base] = (self.naming[base] or 0) + 1
+  local md = self.ctx.memory.data
+  md.name_seq = md.name_seq or {}
+  md.name_seq[base] = self.naming[base]
   return string.format("gen_%s_%d", base, self.naming[base])
 end
 
@@ -170,6 +176,9 @@ end
 -- load (hot-reload). Seed both from persisted births: continue the name sequence
 -- past the highest used index, and put still-living organs back under selection.
 function Evolver:rehydrate()
+  for tpl, n in pairs(self.ctx.memory.data.name_seq or {}) do
+    if n > (self.naming[tpl] or 0) then self.naming[tpl] = n end
+  end
   local births = self.ctx.memory.data.births or {}
   for _, b in ipairs(births) do
     if b.organ and b.template then
@@ -365,15 +374,10 @@ function Evolver:step()
     local c = ctx.memory.data.counters or {}
     local okc, fbc = c.llm_ok or 0, c.llm_fallback or 0
     local fbr = (okc + fbc) > 0 and (fbc / (okc + fbc)) or 0
-    local mpath = (cfg.state_dir or ".") .. "/evolution.log"
-    local existed = io.open(mpath, "r"); if existed then existed:close() end
-    local mf = io.open(mpath, "a")
-    if mf then
-      if not existed then mf:write("tick\tgen\tpop\tmean\tmax\tmin\tstddev\tspecies\tcells\tfallback\n") end
-      mf:write(string.format("%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%d\t%.3f\n",
-        ctx.kernel.tick, ctx.memory.data.generation, n, mean, mx, mn, sd, nsp, ncells, fbr))
-      mf:close()
-    end
+    Log.append((cfg.state_dir or ".") .. "/evolution.log",
+      string.format("%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%d\t%.3f\n",
+        ctx.kernel.tick, ctx.memory.data.generation, n, mean, mx, mn, sd, nsp, ncells, fbr),
+      cfg.log_max_bytes, "tick\tgen\tpop\tmean\tmax\tmin\tstddev\tspecies\tcells\tfallback\n")
     -- dump the current repertoire (cell -> best organ) for a visible QD map
     local rf = io.open((cfg.state_dir or ".") .. "/repertoire.txt", "w")
     if rf then
@@ -461,6 +465,14 @@ function Evolver:step()
 
   -- 4) ENTROPY: idle capabilities slowly decay (keeps selection honest)
   ctx.memory:decay(cfg.decay_rate or 0.03)
+
+  -- 5) bound the birth record: living organs + the most recent births_keep
+  local alive = {}
+  for nm in pairs(self.organs) do
+    local l = ctx.registry.loaded[nm]
+    if l and l.alive then alive[nm] = true end
+  end
+  ctx.memory:prune_births(alive, cfg.births_keep or 200)
 end
 
 return Evolver

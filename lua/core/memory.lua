@@ -97,6 +97,19 @@ function Memory:record_birth(entry)
   return self.data.generation
 end
 
+-- keep births bounded: every record of a living organ (rehydrate needs its
+-- genes) plus the last `keep` records; older births of dead organs go
+function Memory:prune_births(alive, keep)
+  local births = self.data.births
+  local n = #births
+  if n <= keep then return end
+  local out = {}
+  for i, b in ipairs(births) do
+    if i > n - keep or alive[b.organ] then out[#out + 1] = b end
+  end
+  self.data.births = out
+end
+
 function Memory:bump(counter, by)
   self.data.counters[counter] = (self.data.counters[counter] or 0) + (by or 1)
   return self.data.counters[counter]

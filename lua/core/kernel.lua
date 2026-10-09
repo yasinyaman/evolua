@@ -28,7 +28,7 @@ function Kernel.new(cfg)
   Platform.mkdir_p(cfg.reports_dir)
   Platform.mkdir_p(cfg.state_dir)
 
-  local log = Log.new({ level = cfg.log_level, path = cfg.state_dir .. "/evolua.log" })
+  local log = Log.new({ level = cfg.log_level, path = cfg.state_dir .. "/evolua.log", max_bytes = cfg.log_max_bytes })
   local self = setmetatable({ cfg = cfg, tick = 0, running = false, sensors = {} }, Kernel)
 
   -- shared organism context handed to every subsystem & plugin

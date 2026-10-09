@@ -4,7 +4,8 @@
 -- audited; anything destructive or low-confidence is routed to a file-based
 -- approval inbox instead of being executed. See docs/ROADMAP.md §"Otonomi".
 
-local P = require("core.platform")
+local P   = require("core.platform")
+local Log = require("core.log")
 
 local Autonomy = {}
 Autonomy.__index = Autonomy
@@ -30,8 +31,7 @@ function Autonomy.new(ctx)
 end
 
 function Autonomy:audit(line)
-  local fh = io.open(self.audit_path, "a")
-  if fh then fh:write(os.date("%Y-%m-%d %H:%M:%S "), line, "\n"); fh:close() end
+  Log.append(self.audit_path, os.date("%Y-%m-%d %H:%M:%S ") .. line .. "\n", self.ctx.cfg.log_max_bytes)
 end
 
 -- decide the effective level for a decision and carry it out.

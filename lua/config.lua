@@ -205,7 +205,14 @@ return {
 
   -- reporting
   report_flush = 12,         -- observations buffered before a report is written
+  report_keep  = 100,        -- keep only the newest N report files in reports/
+  rule_cooldown = 10,        -- a rule organ's report/log rule fires at most once per N ticks
+
+  -- bounded growth (an organism may live for months)
+  births_keep        = 200,  -- birth records kept beyond those of living organs
+  rag_max_situations = 500,  -- past situations kept in the reasoner's experience bank
 
   -- logging
   log_level = "info",        -- debug | info | warn | error
+  log_max_bytes = 5 * 1024 * 1024,  -- evolua.log / evolution.log / audit.log rotate to *.1 past this
 }

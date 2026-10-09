@@ -835,6 +835,11 @@ local function render_rules(name, genes)
     if r.field and r.op and OPSET[r.op] then
       cond = "(tonumber(d[" .. q(r.field) .. "]) or 0) " .. r.op .. " " .. tostring(tonumber(r.value) or 0)
     end
+    -- report/log rules fire at most once per cfg.rule_cooldown ticks: the seed
+    -- rule (`tick >= 10 → report`) would otherwise report on every heartbeat
+    if r.action ~= "emit" and r.action ~= "act" then
+      cond = cond .. " and ready(" .. i .. ")"
+    end
     local act
     if r.action == "emit" then
       local em = EMITSET[r.emit] and r.emit or "alert.generic"
@@ -860,6 +865,12 @@ local function render_rules(name, genes)
   end
   if #lines == 0 then lines[1] = "      -- (no rules)" end
   local body = "local SELF = " .. q(name) .. "\n" ..
+    "    local last = {}\n" ..
+    "    local function ready(i)\n" ..
+    "      local t = ctx.kernel.tick\n" ..
+    "      if t - (last[i] or -1e9) < (ctx.cfg.rule_cooldown or 10) then return false end\n" ..
+    "      last[i] = t; return true\n" ..
+    "    end\n" ..
     "    ctx.bus:subscribe(" .. q(stim) .. ", function(ev)\n" ..
     "      local d = ev.data or {}\n" ..
     table.concat(lines, "\n") .. "\n" ..

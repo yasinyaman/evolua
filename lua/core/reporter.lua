@@ -4,6 +4,8 @@
 -- SITUATIONAL summary straight from the world model ("what's going on, by app"),
 -- so reports are meaningful even when no organ logged an observation.
 
+local P = require("core.platform")
+
 local Reporter = {}
 Reporter.__index = Reporter
 
@@ -122,6 +124,20 @@ function Reporter:write_report(reason)
   fh:close()
   self.ctx.log:info("\27[32m▣ report written: %s (%d obs)\27[0m", path, #self.buf)
   self.buf = {}
+  self:rotate(dir)
+end
+
+-- keep only the newest report_keep reports (names sort chronologically)
+function Reporter:rotate(dir)
+  local keep = self.ctx.cfg.report_keep or 100
+  if keep <= 0 then return end
+  local reports = {}
+  for _, name in ipairs(P.list_dir(dir)) do
+    if name:match("^report%-.+%.md$") then reports[#reports + 1] = name end
+  end
+  if #reports <= keep then return end
+  table.sort(reports)
+  for i = 1, #reports - keep do os.remove(dir .. "/" .. reports[i]) end
 end
 
 -- shutdown flush: write out buffered observations only. With an empty buffer
