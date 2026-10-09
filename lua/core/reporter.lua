@@ -60,7 +60,17 @@ function Reporter:write_report(reason)
 
   local dir = self.ctx.cfg.reports_dir
   local stamp = os.date("%Y%m%d-%H%M%S")
-  local path = string.format("%s/report-%s-t%d.md", dir, stamp, self.ctx.kernel.tick)
+  local base = string.format("%s/report-%s-t%d", dir, stamp, self.ctx.kernel.tick)
+  -- two reports can land in the same second AND tick (e.g. buffer-full then the
+  -- shutdown flush) — never overwrite: suffix -2, -3, … until the name is free
+  local path, n = base .. ".md", 1
+  while true do
+    local probe = io.open(path, "r")
+    if not probe then break end
+    probe:close()
+    n = n + 1
+    path = string.format("%s-%d.md", base, n)
+  end
   local fh = io.open(path, "w")
   if not fh then return end
 
@@ -114,7 +124,11 @@ function Reporter:write_report(reason)
   self.buf = {}
 end
 
--- backward-compatible alias (kernel shutdown / older callers)
-function Reporter:flush(_final) self:write_report("flush") end
+-- shutdown flush: write out buffered observations only. With an empty buffer
+-- there is nothing new to say (the periodic report already covers the world view).
+function Reporter:flush(_final)
+  if #self.buf == 0 then return end
+  self:write_report("flush")
+end
 
 return Reporter
