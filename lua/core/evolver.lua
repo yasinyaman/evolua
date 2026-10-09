@@ -26,6 +26,17 @@ local function deepcopy(v)
   return c
 end
 
+-- is this organ's lineage PROTECTED seeded infrastructure (colony / supervisor /
+-- explorer)? Such lineages are exempt from culling: losing one would silently and
+-- permanently remove a capability for the rest of the life (their synthetic
+-- triggers mean free-drive can't regrow them). They are also singletons (see
+-- spawn). The flag lives on the template so evolvable lineages — e.g. rule
+-- organs (also *.tick) — stay cullable.
+local function is_protected(template_key)
+  local tpl = Templates[template_key]
+  return tpl and tpl.protected == true
+end
+
 local function unique_name(self, base)
   self.naming[base] = (self.naming[base] or 0) + 1
   return string.format("gen_%s_%d", base, self.naming[base])
@@ -49,6 +60,10 @@ function Evolver:spawn(template_key, genes, lineage, sigma)
     self.ctx.log:debug("evolver: <%s> is disabled for this life — not growing it", template_key)
     return nil
   end
+  -- protected infrastructure (colony / supervisor / explorer) is a SINGLETON. It
+  -- is cull-exempt, so extra copies were never selected, only accumulated: three
+  -- supervisors, three explorers each running `find`, two colonies handling every ping.
+  if tpl.protected and self:population(template_key) >= 1 then return nil end
   genes = genes or {}
   -- fill defaults
   for k, v in pairs(tpl.default_genes or {}) do
@@ -148,16 +163,6 @@ local function tournament(ranked, k)
   return best
 end
 
--- is this organ's lineage PROTECTED seeded infrastructure (colony / supervisor /
--- explorer)? Such lineages are exempt from culling: losing one would silently and
--- permanently remove a capability for the rest of the life (their synthetic
--- triggers mean free-drive can't regrow them). The flag lives on the template so
--- evolvable lineages — e.g. rule organs (also *.tick) — stay cullable.
-local function is_protected(template_key)
-  local tpl = Templates[template_key]
-  return tpl and tpl.protected == true
-end
-
 -- re-adopt inherited organs across lives ----------------------------------
 -- A reincarnated life loads its organs from disk (registry:scan), but the
 -- evolver's per-template name counter and organ table start empty — so it would
@@ -179,6 +184,22 @@ function Evolver:rehydrate()
           sigma = b.sigma,                       -- re-adopt the lineage's learned ES step sizes
         }
       end
+    end
+  end
+  -- lives from before protected organs became singletons may have left several
+  -- copies of one; keep the fittest and retire the rest
+  local fit, keep = self.ctx.memory.data.fitness, {}
+  for name, rec in pairs(self.organs) do
+    if is_protected(rec.template) then
+      local cur = keep[rec.template]
+      if not cur or (fit[name] or 0) > (fit[cur] or 0) then keep[rec.template] = name end
+    end
+  end
+  for name, rec in pairs(self.organs) do
+    if is_protected(rec.template) and keep[rec.template] ~= name then
+      self.ctx.registry:retire(name, "surplus copy of a singleton organ", true)
+      self.organs[name] = nil
+      fit[name] = nil
     end
   end
 end
@@ -250,8 +271,10 @@ function Evolver:bandit_pick()
   for _, n in pairs(tries) do N = N + n end
   local c = self.ctx.cfg.bandit_c or 1.5
   local best, bscore = nil, -1e18
-  for key in pairs(Templates) do
-    if self:allowed(key) then                      -- never invest in a disabled template
+  for key, tpl in pairs(Templates) do
+    -- never invest in a disabled template, nor in protected singletons (seeded
+    -- once; a second copy is refused by spawn anyway)
+    if self:allowed(key) and not tpl.protected then
       local n = tries[key] or 0
       local score
       if n == 0 then score = 1e17                   -- optimistic prior: try each arm once
