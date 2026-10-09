@@ -10,7 +10,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{Instant, UNIX_EPOCH};
 
 use mlua::{Lua, Table};
 
@@ -48,6 +48,15 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, ()| {
             Ok(std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned()))
         })?,
+    )?;
+
+    // host_now_ms() -> monotonic milliseconds since start. Wall-clock, so the bus
+    // can charge a reactor for time spent in child processes (find, ps, lsof) —
+    // os.clock() counts only this process's own CPU time.
+    let start = Instant::now();
+    g.set(
+        "host_now_ms",
+        lua.create_function(move |_, ()| Ok(start.elapsed().as_secs_f64() * 1000.0))?,
     )?;
 
     // host_walk(root, {depth, limit, kind="dir"|"file", suffix, prune={names}})

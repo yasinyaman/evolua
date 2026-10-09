@@ -157,6 +157,17 @@ function M.kill(pid)
   return true
 end
 
+-- ── time ─────────────────────────────────────────────────────────────────
+-- Seconds for measuring how long something took. In the binary: monotonic
+-- wall-clock (host_now_ms), which includes time spent waiting on child
+-- processes. Plain Lua has no wall clock finer than os.time(), so it falls back
+-- to os.clock() — this process's CPU time only.
+function M.clock()
+  local host = rawget(_G, "host_now_ms")
+  if host then return host() / 1000 end
+  return os.clock()
+end
+
 -- ── filesystem (host bindings when embedded, quoted shell otherwise) ──────
 -- In the binary these go through src/host.rs — no shell at all. Plain-Lua runs
 -- fall back to shell commands, with every path quoted by M.shq.
