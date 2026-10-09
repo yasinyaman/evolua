@@ -21,18 +21,18 @@ which are intentionally **bilingual TR/EN** (e.g. "hata"/"error" → `error_repo
 synonyms feed the reasoner's RAG, the Turkish ones keep Turkish `--goal` directives working —
 don't translate the Turkish away. Keep README.md and README.tr.md in sync when you change either.
 
-## This directory IS the standalone crate
+## Repository layout
 
-`evolua/` is its own detached Cargo workspace (note the empty `[workspace]` table in
-`Cargo.toml`) — it does not join or affect any parent workspace. Build it from here directly.
+EvoLua is a standalone repository (github.com/yasinyaman/evolua) and a single crate; build it
+from the repo root. The empty `[workspace]` table in `Cargo.toml` keeps it its own workspace
+root even if it is checked out inside another Cargo workspace.
 
 **Source vs. runtime artifacts** — the only source is `src/` (Rust host) and `lua/` (the
 organism). These directories are runtime output the organism regenerates and are gitignored;
 do **not** treat them as source or hand-edit them:
-- `plugins/`, `reports/`, `state/`, `sandbox/` at the repo root
+- `plugins/`, `reports/`, `state/`, `sandbox/` at the repo root, and the same dirs under
+  `lua/` (a plain-Lua run's default data home)
 - a stray nested `evolua/` directory (created if launched from inside its own folder)
-
-This working copy is **not currently a git repository** (`git init` if you need one).
 
 ## Build & run
 

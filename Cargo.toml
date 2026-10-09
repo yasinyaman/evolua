@@ -1,10 +1,6 @@
-# EvoLua — standalone single-binary crate.
+# EvoLua — standalone single-binary crate (its own repository).
 #
-# This is a SELF-CONTAINED workspace (note the empty [workspace] table below):
-# Cargo treats this directory as its own workspace root, so it does NOT join —
-# and cannot affect — the parent mini-lua-coder workspace. Build it on its own:
-#
-#   cd evolua && cargo build --release
+#   cargo build --release
 #   ./target/release/evolua --ticks 60 --tick-seconds 0.2
 #
 # The Lua organism (lua/) is embedded into the binary via rust-embed and runs in
@@ -19,7 +15,8 @@ edition = "2021"
 license = "MIT"
 description = "A self-evolving Lua organism that perceives its environment, grows its own plugins, and reports back — as a single binary."
 
-# Detach from the parent workspace without editing it.
+# Its own workspace root, so a checkout nested inside another Cargo workspace
+# still builds on its own.
 [workspace]
 
 [[bin]]
@@ -28,7 +25,7 @@ path = "src/main.rs"
 
 [dependencies]
 # In-process Lua 5.4, built from vendored source and statically linked → the
-# interpreter ships inside the binary (same stack mini-lua-coder uses).
+# interpreter ships inside the binary.
 mlua = { version = "0.10", features = ["lua54", "vendored"] }
 # Embed the lua/ source tree into the binary at compile time.
 rust-embed = "8"

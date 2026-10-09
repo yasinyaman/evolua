@@ -4,14 +4,12 @@
 -- new organs (plugins) when it meets a need it can't yet handle, evolves them
 -- under selection pressure, and reports back.
 --
--- Usage:
---   lua main.lua                         # free mode, lives indefinitely
---   lua main.lua --mode directed --goal "report errors"
---   lua main.lua --ticks 60              # bounded run (good for trying it out)
---   lua main.lua --tick-seconds 0.2 --ticks 100   # fast demo
---
--- Run from the evolua/ directory (so package paths resolve), or from repo root
--- with:  lua -e 'package.path="evolua/?.lua;"..package.path' evolua/main.lua
+-- Usage (from the repo root; any working directory works — module paths
+-- resolve relative to this file):
+--   lua lua/main.lua                         # free mode, lives indefinitely
+--   lua lua/main.lua --mode directed --goal "report errors"
+--   lua lua/main.lua --ticks 60              # bounded run (good for trying it out)
+--   lua lua/main.lua --tick-seconds 0.2 --ticks 100   # fast demo
 
 -- make `require("core.x")` / `require("sensors.x")` work regardless of cwd.
 -- (In the single-binary build these modules come from package.preload, injected
@@ -172,9 +170,10 @@ EvoLua — a self-evolving Lua organism
   --colony-root <path>       shared colony directory root (set automatically for clones)
 
 Examples:
-  lua main.lua --ticks 60 --tick-seconds 0.2
-  lua main.lua --goal "watch filesystem changes" --ticks 80
-  lua main.lua --ticks 120 --tick-seconds 0.2 --clone   # let it replicate (bounded)
+  evolua --ticks 60 --tick-seconds 0.2
+  evolua --goal "watch filesystem changes" --ticks 80
+  evolua --ticks 120 --tick-seconds 0.2 --clone     # let it replicate (bounded)
+  (plain Lua: lua lua/main.lua …, same flags)
 ]])
       os.exit(0)
     else

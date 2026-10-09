@@ -17,8 +17,9 @@ purpose** for its offspring, and reporting back. It ships as a single self-conta
 The only deliberate exception is a thin host-side **supervisor** ("brainstem") that observes
 the organism's vitals and feeds them back — it watches, it never steers (see below).
 
-> **Fully standalone.** `evolua/` is its own detached Cargo workspace (note the empty
-> `[workspace]` table in `Cargo.toml`); it neither joins nor affects any parent workspace.
+> **Fully standalone.** A repository and crate of its own: `cargo build --release` from the
+> repo root. The empty `[workspace]` table in `Cargo.toml` keeps it independent even when
+> checked out inside another Cargo workspace.
 
 ---
 
