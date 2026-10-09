@@ -706,8 +706,13 @@ T["explorer"] = {
         return { handled = true, reward = 1 }
 
       elseif m == "net" then
-        local raw = run("lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null")
-        if raw == "" then raw = run("netstat -an 2>/dev/null | grep -i listen") end
+        local raw
+        if cfg.is_windows then
+          raw = run("netstat -an 2>nul | findstr /i listening")
+        else
+          raw = run("lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null")
+          if raw == "" then raw = run("netstat -an 2>/dev/null | grep -i listen") end
+        end
         local n, names = 0, {}
         for line in raw:gmatch("[^\n]+") do
           if not line:find("^COMMAND") then
@@ -743,7 +748,7 @@ T["explorer"] = {
       else -- sys (once)
         if not sys_done then
           sys_done = true
-          local u = run("uname -srm 2>/dev/null"):gsub("%s+$", "")
+          local u = run(cfg.is_windows and "ver" or "uname -srm 2>/dev/null"):gsub("^%s+", ""):gsub("%s+$", "")
           ctx.bus:emit("env.discovery", { kind = "sys", detail = (u ~= "" and u or "unknown host") })
         end
         return { handled = true, reward = 1 }

@@ -83,12 +83,6 @@ function Kernel:boot()
     #ctx.registry:list(), ctx.memory.data.generation)
 end
 
--- portable sleep without external deps
-local function sleep(sec)
-  if sec <= 0 then return end
-  os.execute("sleep " .. tostring(sec) .. " 2>/dev/null")
-end
-
 function Kernel:run()
   self:boot()
   self.running = true
@@ -139,7 +133,7 @@ function Kernel:run()
     end
 
     if max and self.tick >= max then self.running = false end
-    if self.running then sleep(self.cfg.tick_seconds or 1) end
+    if self.running then Platform.sleep(self.cfg.tick_seconds or 1) end
   end
 
   self:shutdown()

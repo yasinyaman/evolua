@@ -168,6 +168,20 @@ function M.clock()
   return os.clock()
 end
 
+-- Pause for sec seconds (fractions allowed). The binary sleeps natively; plain
+-- Lua has no sleep, so it shells out — `sleep` on unix, PowerShell on Windows
+-- (cmd has no fractional-second sleep).
+function M.sleep(sec)
+  if not sec or sec <= 0 then return end
+  local host = rawget(_G, "host_sleep_ms")
+  if host then return host(sec * 1000) end
+  if M.os == "windows" then
+    os.execute(string.format('powershell -NoProfile -Command "Start-Sleep -Milliseconds %d" 2>nul', math.floor(sec * 1000)))
+  else
+    os.execute("sleep " .. tostring(sec) .. " 2>/dev/null")
+  end
+end
+
 -- ── filesystem (host bindings when embedded, quoted shell otherwise) ──────
 -- In the binary these go through src/host.rs — no shell at all. Plain-Lua runs
 -- fall back to shell commands, with every path quoted by M.shq.

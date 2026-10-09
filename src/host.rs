@@ -59,6 +59,18 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(move |_, ()| Ok(start.elapsed().as_secs_f64() * 1000.0))?,
     )?;
 
+    // host_sleep_ms(ms) — the tick loop's pause, without spawning `sleep` (which
+    // Windows doesn't have: there the loop used to spin at 100% CPU)
+    g.set(
+        "host_sleep_ms",
+        lua.create_function(|_, ms: f64| {
+            if ms.is_finite() && ms > 0.0 {
+                std::thread::sleep(std::time::Duration::from_secs_f64(ms / 1000.0));
+            }
+            Ok(())
+        })?,
+    )?;
+
     // host_walk(root, {depth, limit, kind="dir"|"file", suffix, prune={names}})
     //   -> { {path=, dir=, mtime=, size=}, ... }   breadth-first, like `find -maxdepth`
     g.set(
