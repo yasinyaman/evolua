@@ -84,17 +84,24 @@ function M.proc_list()
   local out = {}
   if not cmd then return out end
   for line in M.run(cmd):gmatch("[^\n]+") do
-    -- pid  pcpu  rss(KB)  comm(rest of line, may contain spaces/path)
-    local pid, cpu, rss, name = line:match("^%s*(%d+)%s+([%d%.]+)%s+(%d+)%s+(.+)$")
+    -- pid  pcpu  rss(KB)  comm(rest of line, may contain spaces/path).
+    -- pcpu may use a decimal comma under some locales ("0,5").
+    local pid, cpu, rss, name = line:match("^%s*(%d+)%s+([%d%.,]+)%s+(%d+)%s+(.+)$")
     if pid then
-      -- keep just the basename of comm (strip path)
-      local base = name:match("([^/\\]+)%s*$") or name
-      out[#out + 1] = {
-        pid = tonumber(pid),
-        cpu = tonumber(cpu) or 0,
-        mem_mb = (tonumber(rss) or 0) / 1024,
-        name = base:gsub("%s+$", ""),
-      }
+      name = name:gsub("%s+$", "")
+      -- macOS prints comm as the executable's full path: keep the basename.
+      -- Linux comm is already a name, and kernel threads carry a "/<cpu>"
+      -- suffix (ksoftirqd/1, kworker/0:1) — stripping there left an entity "1".
+      if M.os == "macos" then name = name:match("([^/]+)$") or name end
+      -- a name that is empty or only digits/punctuation identifies nothing
+      if name:find("%a") then
+        out[#out + 1] = {
+          pid = tonumber(pid),
+          cpu = tonumber((cpu:gsub(",", "."))) or 0,
+          mem_mb = (tonumber(rss) or 0) / 1024,
+          name = name,
+        }
+      end
     end
   end
   return out
