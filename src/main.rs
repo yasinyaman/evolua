@@ -11,6 +11,7 @@
 // creates it, and hands it to the organism as the global `EVOLUA_HOME`. That is
 // where the organism keeps the plugins it grows, its reports, and its memory.
 
+use std::borrow::Cow;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -24,9 +25,38 @@ mod llm;
 mod acquire;
 mod supervisor;
 
+// Only the organism's SOURCE is embedded: core/, sensors/, config.lua, main.lua.
+// A plain-Lua run keeps its runtime artifacts under lua/ (plugins/, state/,
+// reports/, …); those must never be compiled as modules (state/memory.lua is a
+// bare table, not a chunk) nor shipped inside a release binary.
 #[derive(RustEmbed)]
-#[folder = "lua/"]
-struct LuaSrc;
+#[folder = "lua/core/"]
+#[prefix = "core/"]
+struct CoreSrc;
+
+#[derive(RustEmbed)]
+#[folder = "lua/sensors/"]
+#[prefix = "sensors/"]
+struct SensorSrc;
+
+const CONFIG_LUA: &str = include_str!("../lua/config.lua");
+const MAIN_LUA: &str = include_str!("../lua/main.lua");
+
+/// (path, source) for every embedded module except main.lua.
+fn embedded_modules() -> Vec<(String, Cow<'static, [u8]>)> {
+    let mut out = vec![("config.lua".to_string(), Cow::Borrowed(CONFIG_LUA.as_bytes()))];
+    for p in CoreSrc::iter() {
+        if let Some(f) = CoreSrc::get(&p) {
+            out.push((p.into_owned(), f.data));
+        }
+    }
+    for p in SensorSrc::iter() {
+        if let Some(f) = SensorSrc::get(&p) {
+            out.push((p.into_owned(), f.data));
+        }
+    }
+    out
+}
 
 /// Pick a writable home for the organism's body parts & memory.
 /// Priority: $EVOLUA_HOME → OS data dir/EvoLua → ./evolua-data (last resort).
@@ -127,30 +157,20 @@ fn run() -> mlua::Result<()> {
         globals.set("model_acquire", f)?;
     }
 
-    // 4) register every embedded module into package.preload, except main.lua
+    // 4) register every embedded module into package.preload (main.lua runs below)
     let package: Table = globals.get("package")?;
     let preload: Table = package.get("preload")?;
-    let mut main_body: Option<Vec<u8>> = None;
-    for path in LuaSrc::iter() {
-        let p = path.as_ref();
+    for (p, data) in embedded_modules() {
         if !p.ends_with(".lua") {
             continue;
         }
-        let file = LuaSrc::get(p).expect("embedded file");
-        if p == "main.lua" {
-            main_body = Some(file.data.into_owned());
-            continue;
-        }
         let chunk_name = format!("@{}", p);
-        let func = lua
-            .load(&*file.data)
-            .set_name(&chunk_name)
-            .into_function()?;
-        preload.set(module_name(p), func)?;
+        let func = lua.load(&*data).set_name(&chunk_name).into_function()?;
+        preload.set(module_name(&p), func)?;
     }
 
     // 5) breathe life into it
-    let mut body = main_body.ok_or_else(|| mlua::Error::RuntimeError("embedded main.lua missing".into()))?;
+    let mut body = MAIN_LUA.as_bytes().to_vec();
     // The standalone `lua` CLI skips a leading shebang (#!) line; mlua's loader
     // does not. main.lua carries one for plain-`lua` execution, so strip it here
     // (keep the newline to preserve line numbers in any error messages).
