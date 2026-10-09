@@ -32,9 +32,11 @@ function Kernel.new(cfg)
   local self = setmetatable({ cfg = cfg, tick = 0, running = false, sensors = {} }, Kernel)
 
   -- shared organism context handed to every subsystem & plugin
-  -- ctx.platform gives sandboxed organs (which can't require core) the OS layer:
-  -- shell quoting, path checks, list_dir / walk / mkdir_p without the shell.
-  local ctx = { cfg = cfg, log = log, kernel = self, platform = Platform }
+  -- sandboxed organs can't require core, so the kernel hands them two modules:
+  -- ctx.platform (shell quoting, path checks, list_dir / walk / mkdir_p without
+  -- the shell) and ctx.serialize (Lua literals for anything they persist).
+  local ctx = { cfg = cfg, log = log, kernel = self, platform = Platform,
+                serialize = require("core.serialize") }
   ctx.bus      = Bus.new(log, cfg)   -- cfg carries the honest-reward tunables
   ctx.memory   = Memory.new(cfg.state_dir .. "/memory.lua")
   ctx.registry = Registry.new(ctx)

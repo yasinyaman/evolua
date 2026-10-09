@@ -3,16 +3,11 @@
 -- it exposes, and how to render itself into a standalone plugin .lua file.
 -- New capabilities are BORN here as source code, not hand-written.
 
-local EU = require("core.evo_util")   -- shared ES kernel (es_step) for rule thresholds
+local EU  = require("core.evo_util")   -- shared ES kernel (es_step) for rule thresholds
+local Ser = require("core.serialize")  -- genes → Lua literal (nested tables included)
 
 local function literal(genes)
-  -- render a flat genes table as a Lua literal
-  local parts = {}
-  for k, v in pairs(genes) do
-    local val = type(v) == "string" and string.format("%q", v) or tostring(v)
-    parts[#parts + 1] = string.format("%s = %s", k, val)
-  end
-  return "{ " .. table.concat(parts, ", ") .. " }"
+  return Ser.ser(genes)
 end
 
 -- header shared by every generated organ
@@ -312,20 +307,13 @@ T["colony"] = {
       if split_n % 2 == 1 then return exp or exl else return exl or exp end
     end
 
-    -- VERTICAL GENE TRANSFER (#11): serialize a flat gene/sigma table to a Lua
-    -- literal, and find the parent's FITTEST living organ for the goal's template so
-    -- the child inherits TUNED genes (+ learned ES steps), not template defaults.
-    -- Best-effort: nil if the parent serves no organ of that template (e.g. an
-    -- explore-goal niche it doesn't occupy yet) → child starts fresh, as before.
-    local function ser_flat(t)
-      if not t then return "nil" end
-      local parts = {}
-      for k, v in pairs(t) do
-        local val = (type(v) == "string") and string.format("%q", v) or tostring(v)
-        parts[#parts + 1] = string.format("[%q]=%s", tostring(k), val)
-      end
-      return "{" .. table.concat(parts, ",") .. "}"
-    end
+    -- VERTICAL GENE TRANSFER (#11): find the parent's FITTEST living organ for the
+    -- goal's template so the child inherits TUNED genes (+ learned ES steps), not
+    -- template defaults; they are written with the core serializer (ctx.serialize),
+    -- which handles nested genomes too. Best-effort: nil if the parent serves no
+    -- organ of that template (e.g. an explore-goal niche it doesn't occupy yet) →
+    -- child starts fresh, as before.
+    local ser = ctx.serialize.ser
     local function inherit_for(goal)
       if not goal or goal == "" then return nil end
       local tg  = cfg.template_goal or {}
@@ -492,7 +480,7 @@ T["colony"] = {
             if itmpl then
               ensure_dir(chome)
               write_file(chome .. "/inherited.lua", string.format(
-                "return { [%q] = { genes = %s, sigma = %s } }\n", itmpl, ser_flat(igenes), ser_flat(isigma)))
+                "return { [%q] = { genes = %s, sigma = %s } }\n", itmpl, ser(igenes), ser(isigma)))
             end
             local flags = " --colony-id " .. cid
               .. " --generation " .. tostring(gen() + 1)
@@ -895,7 +883,7 @@ local function render_rules(name, genes)
     table.concat(lines, "\n") .. "\n" ..
     "      return false\n" ..
     "    end, SELF)"
-  return render(name, "rule organ (evolved reflex on " .. stim .. ")", { stim }, {}, body)
+  return render(name, "rule organ (evolved reflex on " .. stim .. ")", { stim }, genes, body)
 end
 
 -- structural mutation: rewrite ONE aspect of the genome --------------------------
