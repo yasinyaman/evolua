@@ -249,7 +249,7 @@ table (`bus`, `memory`, `registry`, `evolver`, `worldmodel`, `reasoner`, `autono
 | Mode | How | Behavior |
 |---|---|---|
 | **free** | no goal | reacts to whatever the environment offers; grows an organ for any recurring stimulus it can't yet handle |
-| **directed** | `--goal "..."` | grows goal-relevant organs first (bilingual TR/EN keyword match), then free evolution continues |
+| **directed** | `--goal "..."` | grows goal-relevant organs first (bilingual TR/EN keyword match; generic words like *monitor*/*izle*/*report* alone don't trigger growth), then free evolution continues |
 
 Directed-mode matching is bilingual: "hata"/"error" → `error_reporter`, "dosya"/"file" →
 `fs_journal`, "cpu"/"kaynak"/"resource" → guards, etc.

@@ -157,7 +157,10 @@ the **rule-DSL/GP** organ (`rule`): a genome of typed rules
 primitives** — capability-isolated by construction (so structure evolves while staying sandboxed).
 The evolver's `step()`:
 1. **directed drive** — grow organs whose `goal_keywords` match the goal, using a clone's
-   inherited genes (`cfg.inherited_genes` — vertical gene transfer) when present;
+   inherited genes (`cfg.inherited_genes` — vertical gene transfer) when present. A keyword
+   matches at the start of a goal word; distinctive keywords weigh 2, generic ones
+   (`cfg.goal_generic_keywords`) and keywords shared by several templates weigh 1, and a template
+   grows at score ≥ 2 — so give a new template at least one keyword no other template uses;
 2. **free drive** — when an event's `unhandled_streak ≥ need_threshold`, `spawn()` a template
    that triggers on it;
 3. **MAP-Elites archive** — `update_archive()` keeps the best living organ per behavior cell

@@ -40,10 +40,14 @@ end
 local T = {}
 
 -- threshold guard for a numeric metric (cpu / mem / load) -----------------
-local function guard(metric_event, field, label)
+-- Each guard has its OWN keywords plus the shared generic ones, so "cpu
+-- resource" grows the cpu guard only (it used to grow all three).
+local function guard(metric_event, field, label, keywords)
+  local kws = { "kaynak", "resource", "izle", "monitor", "guard" }
+  for _, k in ipairs(keywords) do kws[#kws + 1] = k end
   return {
     triggers = metric_event,
-    goal_keywords = { "kaynak", "resource", "cpu", "memory", "bellek", "yük", "load", "izle", "monitor", "guard" },
+    goal_keywords = kws,
     default_genes = { threshold = (field == "one") and 4 or 75, cooldown = 5 },
     build = function(name, genes)
       local body = string.format([[
@@ -64,9 +68,10 @@ local function guard(metric_event, field, label)
   }
 end
 
-T["cpu_guard"]  = guard("metric.cpu",  "pct", "CPU")
-T["mem_guard"]  = guard("metric.mem",  "pct", "MEM")
-T["load_guard"] = guard("metric.load", "one", "LOAD")
+T["cpu_guard"]  = guard("metric.cpu",  "pct", "CPU",  { "cpu", "işlemci", "processor" })
+T["mem_guard"]  = guard("metric.mem",  "pct", "MEM",  { "memory", "bellek", "ram" })
+-- "yükü"/"yüke", not a bare "yük": that would also match "yüksek" (= high)
+T["load_guard"] = guard("metric.load", "one", "LOAD", { "load", "yükü", "yüke" })
 
 -- error reporter: collects log.error / self.error and writes reports -------
 T["error_reporter"] = {
@@ -618,7 +623,8 @@ T["explorer"] = {
   triggers = "explore.tick",
   protected = true,   -- seeded infrastructure: exempt from culling (can't be regrown)
   goal_keywords = {
-    "keşif", "keşfet", "explore", "discover", "ortam", "environment", "tara", "scan", "merak",
+    -- "tarama", not "tara": that would also match "taraf"/"tarafından" (= side / by)
+    "keşif", "keşfet", "explore", "discover", "ortam", "environment", "tarama", "scan", "merak",
   },
   default_genes = { explore_every = 7, depth = 2, breadth = 6 },
   build = function(name, genes)

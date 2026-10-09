@@ -134,6 +134,13 @@ return {
     ["metric.load"]= "system load",
     ["proc.hot"]   = "cpu resource",
   },
+  -- directed-goal keywords too generic to grow a template on their own: they
+  -- weigh 1 (a template's distinctive keywords weigh 2; growth needs >= 2), so
+  -- "report" alone grows nothing while "report errors" grows error_reporter.
+  goal_generic_keywords = {
+    "izle", "monitor", "watch", "takip", "track", "log", "report", "rapor",
+    "guard", "kaynak", "resource", "kendi", "mesaj", "message",
+  },
   -- exploit: the highest-FITNESS organ's template → this goal (deepens what pays)
   template_goal = {
     error_reporter = "report errors",

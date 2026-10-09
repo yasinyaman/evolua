@@ -174,7 +174,7 @@ bir organ olamazlar). Kural grameri ise `templates.lua`'da (blueprint katmanı) 
 | Mod | Nasıl | Davranış |
 |---|---|---|
 | **free** | hedefsiz | ortamı gözler; karşılayamadığı her tekrarlayan uyarana organ büyütür |
-| **directed** | `--goal "..."` | hedef anahtar kelimelerine göre ilgili organları öncelikli büyütür (TR/EN), sonra serbest evrim sürer |
+| **directed** | `--goal "..."` | hedef anahtar kelimelerine göre ilgili organları öncelikli büyütür (TR/EN; *izle*/*monitor*/*rapor* gibi genel kelimeler tek başına büyütmez), sonra serbest evrim sürer |
 
 ---
 

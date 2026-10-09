@@ -146,16 +146,46 @@ function Evolver:serves(trigger)
   return false
 end
 
+-- does a word of `text` START with kw? Turkish suffixes still match ("izle" in
+-- "izlemek") but a keyword buried mid-word doesn't ("load" in "download", "üre"
+-- in "süre"). Bytes >= 128 are UTF-8 letters, so they count as word characters.
+local function word_prefix(text, kw)
+  local init = 1
+  while true do
+    local s = text:find(kw, init, true)
+    if not s then return false end
+    local prev = s > 1 and text:byte(s - 1) or nil
+    if not prev or not (prev >= 128 or string.char(prev):match("%w")) then return true end
+    init = s + 1
+  end
+end
+
 -- pick templates relevant to a directed goal string -----------------------
-local function goal_templates(goal)
-  local picks, low = {}, goal:lower()
+-- A template's own (distinctive) keywords weigh 2; generic ones
+-- (cfg.goal_generic_keywords: izle/monitor/log/report …) and keywords several
+-- templates share weigh 1. A template grows at score >= 2, so "report errors"
+-- grows the error reporter while "report" alone, or the "izle" in "dosya
+-- değişikliklerini izle", no longer grows every template that lists it.
+local function goal_templates(goal, cfg)
+  local low = goal:lower()
+  local generic, owners = {}, {}
+  for _, w in ipairs(cfg.goal_generic_keywords or {}) do generic[w] = true end
+  for _, tpl in pairs(Templates) do
+    for _, kw in ipairs(tpl.goal_keywords or {}) do owners[kw] = (owners[kw] or 0) + 1 end
+  end
+  local picks = {}
   for key, tpl in pairs(Templates) do
+    local score = 0
     for _, kw in ipairs(tpl.goal_keywords or {}) do
-      if low:find(kw, 1, true) then picks[key] = true; break end
+      if word_prefix(low, kw) then
+        score = score + ((generic[kw] or owners[kw] > 1) and 1 or 2)
+      end
     end
+    if score >= 2 then picks[key] = true end
   end
   return picks
 end
+Evolver.goal_templates = goal_templates   -- exposed for tests
 
 -- k-tournament: sample k organs, return the fittest of the sample. Unlike pure
 -- elitism (always breed rank-1), this lets mid-fitness organs occasionally breed,
@@ -308,7 +338,7 @@ function Evolver:step()
 
   -- 1) DIRECTED drive: make sure goal-relevant organs exist
   if cfg.mode == "directed" and cfg.goal and cfg.goal ~= "" then
-    for key in pairs(goal_templates(cfg.goal)) do
+    for key in pairs(goal_templates(cfg.goal, cfg)) do
       local tpl = Templates[key]
       if tpl and not self:serves(tpl.triggers) then
         local inh = cfg.inherited_genes and cfg.inherited_genes[key]   -- vertical transfer (#11)
