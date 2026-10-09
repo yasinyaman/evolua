@@ -68,20 +68,51 @@ end
 if os.getenv("EVOLUA_UNATTENDED") == "1" then unattended() end
 
 -- ---- minimal flag parser -------------------------------------------------
+-- A bad command line stops the organism before it lives (exit 2): `--ticks abc`
+-- used to become nil and silently mean "live forever".
+local function die(msg)
+  io.stderr:write("evolua: " .. msg .. " (try --help)\n")
+  os.exit(2)
+end
+
+local function is_int(n) return n % 1 == 0 end
+local POSITIVE_INT = { "a positive integer", function(n) return n >= 1 and is_int(n) end }
+local NONNEG_INT   = { "a non-negative integer", function(n) return n >= 0 and is_int(n) end }
+local NONNEG_NUM   = { "a non-negative number", function(n) return n >= 0 end }
+
 local function parse(args)
   local i = 1
   while i <= #args do
     local a = args[i]
-    local function val() i = i + 1; return args[i] end
-    if a == "--mode" then cfg.mode = val()
+    -- the flag's value: the next argument, which must exist and not be a flag
+    local function val()
+      i = i + 1
+      local v = args[i]
+      if v == nil or v:sub(1, 2) == "--" then die(a .. " needs a value") end
+      return v
+    end
+    local function num(kind)
+      local v = val()
+      local n = tonumber(v)
+      if not n or n ~= n or n == math.huge or n == -math.huge or not kind[2](n) then
+        die(string.format("%s expects %s, got '%s'", a, kind[1], v))
+      end
+      return n
+    end
+    local function word(...)
+      local v = val()
+      for _, w in ipairs({ ... }) do if v == w then return v end end
+      die(string.format("%s expects one of %s, got '%s'", a, table.concat({ ... }, "|"), v))
+    end
+    if a == "--mode" then cfg.mode = word("free", "directed")
     elseif a == "--goal" then cfg.mode = "directed"; cfg.goal = val()
-    elseif a == "--ticks" then cfg.max_ticks = tonumber(val())
-    elseif a == "--tick-seconds" then cfg.tick_seconds = tonumber(val())
-    elseif a == "--evolve-every" then cfg.evolve_every = tonumber(val())
+    elseif a == "--ticks" then cfg.max_ticks = num(POSITIVE_INT)
+    elseif a == "--tick-seconds" then cfg.tick_seconds = num(NONNEG_NUM)
+    elseif a == "--evolve-every" then cfg.evolve_every = num(POSITIVE_INT)
     elseif a == "--watch-dir" then table.insert(cfg.watch_dirs, val())
     elseif a == "--watch-log" then table.insert(cfg.watch_logs, val())
-    elseif a == "--log-level" then cfg.log_level = val()
-    elseif a == "--autonomy" then cfg.autonomy_ceiling = val()
+    elseif a == "--log-level" then cfg.log_level = word("debug", "info", "warn", "error")
+    elseif a == "--autonomy" then cfg.autonomy_ceiling = word("learn", "report", "notify", "suggest", "act")
     elseif a == "--unattended" then unattended()
     -- colony / self-replication
     elseif a == "--clone" then cfg.clone_enabled = true
@@ -89,7 +120,7 @@ local function parse(args)
     elseif a == "--clone-eager" then cfg.clone_require_pressure = false
     elseif a == "--clone-ignore-battery" then cfg.clone_ignore_battery = true
     elseif a == "--clone-generalist" then cfg.purpose_enabled = false
-    elseif a == "--purpose-mode" then cfg.purpose_mode = val()
+    elseif a == "--purpose-mode" then cfg.purpose_mode = word("explore", "exploit", "portfolio")
     elseif a == "--no-purpose-learn" then cfg.purpose_learn = false
     elseif a == "--no-colony" then cfg.colony = false
     elseif a == "--no-supervisor" then cfg.supervisor = false
@@ -98,10 +129,10 @@ local function parse(args)
     elseif a == "--no-explore-expand" then cfg.explore_expand = false
     elseif a == "--explore-root" then cfg.explore_roots = cfg.explore_roots or {}; table.insert(cfg.explore_roots, val())
     elseif a == "--colony-id" then cfg.colony_id = val()
-    elseif a == "--generation" then cfg.generation = tonumber(val())
+    elseif a == "--generation" then cfg.generation = num(NONNEG_INT)
     elseif a == "--colony-root" then cfg.colony_root = val()
-    elseif a == "--clone-max-peers" then cfg.clone_max_peers = tonumber(val())
-    elseif a == "--clone-generations" then cfg.clone_max_generation = tonumber(val())
+    elseif a == "--clone-max-peers" then cfg.clone_max_peers = num(POSITIVE_INT)
+    elseif a == "--clone-generations" then cfg.clone_max_generation = num(NONNEG_INT)
     elseif a == "--help" or a == "-h" then
       print([[
 EvoLua — a self-evolving Lua organism
@@ -145,7 +176,7 @@ Examples:
 ]])
       os.exit(0)
     else
-      io.stderr:write("unknown flag: " .. tostring(a) .. " (try --help)\n")
+      die("unknown flag: " .. tostring(a))
     end
     i = i + 1
   end
