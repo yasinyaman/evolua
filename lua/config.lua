@@ -178,6 +178,12 @@ return {
   bandit_chance    = 0.15,   -- breeding: chance per step to invest in the highest-UCB template (#13)
   bandit_c         = 1.5,    -- bandit exploration constant (higher = try under-sampled templates more)
   rule_seed        = true,   -- seed one evolvable rule-DSL organ (open-ended GP population)
+  -- templates this life may NEVER grow, by any drive (seed, directed, free, bandit,
+  -- illumination, crossover, HGT, reasoner), e.g. { "load_guard" }. main.lua adds
+  -- colony / supervisor / explorer / rule when --no-colony / --no-supervisor /
+  -- --no-explorer / --no-rule is given. Organs of a disabled template already on
+  -- disk from an earlier life stay there but are not loaded.
+  disabled_templates = {},
   rule_max_rules   = 4,      -- bound a rule organ's genome size
   retire_floor   = 0.5,      -- fitness floor: below 2× this, death probability rises toward 1
   decay_rate     = 0.03,     -- per-step fitness entropy

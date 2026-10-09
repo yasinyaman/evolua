@@ -107,10 +107,10 @@ EvoLua — a self-evolving Lua organism
   --clone-generalist         clones are generic copies (skip goal crystallization)
   --purpose-mode <m>         how a clone's goal is chosen: explore|exploit|portfolio
   --no-purpose-learn         disable S4 (don't bias goals by harvested child payoff)
-  --no-colony                do not seed the colony organ at all
-  --no-supervisor            do not seed the host-brainstem watch organ
-  --no-explorer              do not seed the environment-exploration organ
-  --no-rule                  do not seed the evolvable rule-DSL organ
+  --no-colony                never grow the colony organ (no seed, no evolutionary regrowth)
+  --no-supervisor            never grow the host-brainstem watch organ
+  --no-explorer              never grow the environment-exploration organ
+  --no-rule                  never grow evolvable rule-DSL organs
   --no-explore-expand        explore, but don't auto-expand perception (watch dirs/logs)
   --explore-root <path>      add a directory the explorer may wander (repeatable)
   --clone-max-peers <n>      hard cap on simultaneous live instances (default: 3)
@@ -133,6 +133,22 @@ Examples:
 end
 
 parse(arg or {})
+
+-- --no-colony / --no-supervisor / --no-explorer / --no-rule switch the template
+-- off for the WHOLE life, not just the seed: the evolver's spawn gate consults this
+-- set, so no drive (bandit, illumination, directed, …) can grow it back. Accepts a
+-- list ({ "load_guard" }) or a set ({ load_guard = true }) from config.lua.
+do
+  local off = {}
+  for k, v in pairs(cfg.disabled_templates or {}) do
+    if type(k) == "number" then off[v] = true elseif v then off[k] = true end
+  end
+  if cfg.colony == false then off.colony = true end
+  if cfg.supervisor == false then off.supervisor = true end
+  if cfg.explorer == false then off.explorer = true end
+  if cfg.rule_seed == false then off.rule = true end
+  cfg.disabled_templates = off
+end
 
 -- colony wiring: bridge launch context from globals into cfg so the sandboxed
 -- colony organ (which only sees ctx.cfg) can find its identity, the shared

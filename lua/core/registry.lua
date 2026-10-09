@@ -75,6 +75,13 @@ function Registry:load(path)
   return true
 end
 
+-- an organ grown from a template disabled for this life (gen_<template>_<n>.lua)
+-- stays on disk but is not loaded, so --no-colony etc. hold across lives too.
+local function disabled(cfg, fname)
+  local tpl = fname:match("^gen_(.+)_%d+%.lua$")
+  return tpl ~= nil and cfg.disabled_templates ~= nil and cfg.disabled_templates[tpl] == true
+end
+
 -- scan the plugins dir and load anything new
 function Registry:scan()
   local dir = self.dir
@@ -82,7 +89,7 @@ function Registry:scan()
   if not p then return end
   for line in p:lines() do
     local fname = line:match("(.+%.lua)$")
-    if fname then
+    if fname and not disabled(self.ctx.cfg, fname) then
       local name = fname:gsub("%.lua$", "")
       if not (self.loaded[name] and self.loaded[name].alive) then
         self:load(dir .. "/" .. fname)

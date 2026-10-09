@@ -31,10 +31,24 @@ local function unique_name(self, base)
   return string.format("gen_%s_%d", base, self.naming[base])
 end
 
+-- may this template be grown in this life? Templates switched off by a flag
+-- (--no-colony / --no-supervisor / --no-explorer / --no-rule) or listed in
+-- cfg.disabled_templates are never grown, whichever drive asks for them.
+function Evolver:allowed(template_key)
+  local off = self.ctx.cfg.disabled_templates
+  return Templates[template_key] ~= nil and not (off and off[template_key])
+end
+
 -- write a generated organ to disk and load it -----------------------------
+-- This is the ONE gate every drive passes through (seed, directed, free, bandit,
+-- MAP-Elites illumination, crossover, HGT, reasoner), so the checks live here.
 function Evolver:spawn(template_key, genes, lineage, sigma)
   local tpl = Templates[template_key]
   if not tpl then return nil end
+  if not self:allowed(template_key) then
+    self.ctx.log:debug("evolver: <%s> is disabled for this life — not growing it", template_key)
+    return nil
+  end
   genes = genes or {}
   -- fill defaults
   for k, v in pairs(tpl.default_genes or {}) do
@@ -237,14 +251,16 @@ function Evolver:bandit_pick()
   local c = self.ctx.cfg.bandit_c or 1.5
   local best, bscore = nil, -1e18
   for key in pairs(Templates) do
-    local n = tries[key] or 0
-    local score
-    if n == 0 then score = 1e17                     -- optimistic prior: try each arm once
-    else
-      local avg = cnt[key] and (sum[key] / cnt[key]) or 0
-      score = avg + c * math.sqrt(math.log(N + 1) / n)
+    if self:allowed(key) then                      -- never invest in a disabled template
+      local n = tries[key] or 0
+      local score
+      if n == 0 then score = 1e17                   -- optimistic prior: try each arm once
+      else
+        local avg = cnt[key] and (sum[key] / cnt[key]) or 0
+        score = avg + c * math.sqrt(math.log(N + 1) / n)
+      end
+      if score > bscore then best, bscore = key, score end
     end
-    if score > bscore then best, bscore = key, score end
   end
   return best
 end
@@ -280,7 +296,7 @@ function Evolver:step()
     if s.unhandled_streak >= (cfg.need_threshold or 6) then
       -- find a template that answers this stimulus and isn't serving yet
       for key, tpl in pairs(Templates) do
-        if tpl.triggers == t and not self:serves(t) then
+        if tpl.triggers == t and self:allowed(key) and not self:serves(t) then
           ctx.log:info("unmet need: '%s' ignored %d× → growing <%s>", t, s.unhandled_streak, key)
           self:spawn(key)
           s.unhandled_streak = 0
