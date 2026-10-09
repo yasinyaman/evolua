@@ -345,14 +345,18 @@ actions and downloads a better decision model without asking.
 
 Unit tests cover the pure parts: `lua tests/run.lua` (stock Lua, no build needed) and
 `cargo test`. Behavior is verified with bounded runs and inspecting `reports/` and `state/`.
-A full bounded verification suite lives at
-[docs/TESTING.md](docs/TESTING.md) — 25 checks, last run all green: build, base run, colony
-comms, intelligent split, purpose crystallization, power-aware hold-off, generalist clones,
-supervisor roundtrip, cross-life memory, S4 purpose-learning, and environment exploration.
-For a narrated capture of a real run, see [docs/DEMO.md](docs/DEMO.md).
+The bounded behavior suite is `scripts/fulltest.sh` (CI runs it on Ubuntu and macOS):
+build, unit tests, CLI, base run, colony comms, intelligent split, purpose crystallization,
+power-aware hold-off, generalist clones, supervisor roundtrip, cross-life memory and singleton
+infrastructure, S4 purpose-learning, environment exploration, and disabled templates. See
+[docs/TESTING.md](docs/TESTING.md) for what each check proves and the last result. For a
+narrated capture of a real run, see [docs/DEMO.md](docs/DEMO.md).
 
 ```bash
-./clean.sh   # wipe evolved organs/reports/memory so the next run starts never-lived
+lua tests/run.lua      # unit tests (stock Lua)
+cargo test             # host unit tests
+scripts/fulltest.sh    # bounded behavior suite
+./clean.sh             # wipe evolved organs/reports/memory so the next run starts never-lived
 ```
 
 ---

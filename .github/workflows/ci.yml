@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Lua
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update && sudo apt-get install -y lua5.4
+            echo "LUA=lua5.4" >> "$GITHUB_ENV"
+          else
+            brew install lua
+            echo "LUA=lua" >> "$GITHUB_ENV"
+          fi
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Rust unit tests
+        run: cargo test
+      - name: Lua unit tests
+        run: $LUA tests/run.lua
+      - name: Bounded behavior suite
+        run: scripts/fulltest.sh

@@ -248,11 +248,14 @@ sormadan daha iyi bir karar modeli indirir.
 ## Test & sıfırlama
 
 Saf parçalar için birim testler: `lua tests/run.lua` (derleme gerekmez) ve `cargo test`.
-Davranış sınırlı koşularla doğrulanır. Tam doğrulama suite'i
-[docs/TESTING.md](docs/TESTING.md)'de (**25 kontrol, hepsi yeşil**). Gerçek bir koşunun
-açıklamalı çıktısı: [docs/DEMO.tr.md](docs/DEMO.tr.md).
+Davranış sınırlı koşularla doğrulanır: `scripts/fulltest.sh` (CI Ubuntu ve macOS'ta koşar);
+her kontrolün neyi kanıtladığı ve son sonuç [docs/TESTING.md](docs/TESTING.md)'de. Gerçek bir
+koşunun açıklamalı çıktısı: [docs/DEMO.tr.md](docs/DEMO.tr.md).
 
 ```bash
+lua tests/run.lua      # birim testler (stok Lua)
+cargo test             # host birim testleri
+scripts/fulltest.sh    # sınırlı davranış suite'i
 ./clean.sh   # evrimleşmiş organları/raporları/belleği sil; sonraki koşu sıfırdan
 ```
 

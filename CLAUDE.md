@@ -88,7 +88,8 @@ Two layers:
   platform helpers, log rotation) and `cargo test` (`--features acquire` adds the checksum
   tests). Add a `tests/test_*.lua` file to `FILES` in `tests/run.lua` for a new area.
 - **Behavior** — bounded runs (`--ticks N --tick-seconds 0.2`) and inspecting `reports/` and
-  `state/evolua.log`; the scripted suite is in docs/TESTING.md.
+  `state/evolua.log`; the scripted suite is `scripts/fulltest.sh` (what each check proves:
+  docs/TESTING.md). CI (`.github/workflows/ci.yml`) runs clippy, both unit suites and it.
 
 `./clean.sh` wipes all evolved organs/reports/memory so the next run starts from a
 never-lived state (use `EVOLUA_HOME=/path ./clean.sh` for a custom home).
