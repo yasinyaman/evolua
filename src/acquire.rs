@@ -6,8 +6,9 @@
 // (core/modelmgr.lua) under the autonomy ladder; this module is only the safe
 // mechanical "go fetch it" step, invoked via the `model_acquire` binding.
 //
-// NOTE: this path performs network I/O and cannot be exercised in the offline
-// sandbox; it is written against ureq + sha2 and compiled on the user's machine.
+// The network call is one line in download(); everything that decides whether
+// a file becomes the live model is in install(), which the tests below drive
+// with in-memory readers.
 #![cfg(feature = "acquire")]
 
 use std::io::{Read, Write};
@@ -17,18 +18,25 @@ use sha2::{Digest, Sha256};
 
 /// Download `url` → `dest`, optionally checking `sha256` (hex). Atomic on success.
 pub fn download(url: &str, dest: &Path, sha256: Option<&str>) -> anyhow::Result<()> {
+    let resp = ureq::get(url)
+        .timeout(std::time::Duration::from_secs(600))
+        .call()?;
+    install(resp.into_reader(), dest, sha256)
+}
+
+/// Stream `reader` into `<dest>.part`, hashing as it goes. Only a non-empty body
+/// with the expected checksum replaces `dest` (the previous file is kept as
+/// `<name>.prev`, which the Lua `model_rollback` verb puts back). Any failure
+/// removes the .part and leaves `dest` untouched.
+fn install(reader: impl Read, dest: &Path, sha256: Option<&str>) -> anyhow::Result<()> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let tmp = dest.with_extension("part");
-    // a failed or interrupted fetch never leaves a half-written .part behind
-    if let Err(e) = fetch_verified(url, &tmp, sha256) {
+    if let Err(e) = write_verified(reader, &tmp, sha256) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
     }
-
-    // keep the previous model as <name>.prev (the Lua `model_rollback` verb puts
-    // it back), then swap in atomically
     if dest.exists() {
         let bak = dest.with_extension("prev");
         let _ = std::fs::rename(dest, &bak);
@@ -37,14 +45,7 @@ pub fn download(url: &str, dest: &Path, sha256: Option<&str>) -> anyhow::Result<
     Ok(())
 }
 
-/// Stream `url` into `tmp`, hashing as it goes; error on an empty body or a
-/// checksum mismatch.
-fn fetch_verified(url: &str, tmp: &Path, sha256: Option<&str>) -> anyhow::Result<()> {
-    let resp = ureq::get(url)
-        .timeout(std::time::Duration::from_secs(600))
-        .call()?;
-    let mut reader = resp.into_reader();
-
+fn write_verified(mut reader: impl Read, tmp: &Path, sha256: Option<&str>) -> anyhow::Result<()> {
     let mut f = std::fs::File::create(tmp)?;
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 1 << 16];
@@ -62,7 +63,7 @@ fn fetch_verified(url: &str, tmp: &Path, sha256: Option<&str>) -> anyhow::Result
     drop(f);
 
     if total == 0 {
-        anyhow::bail!("empty download from {url}");
+        anyhow::bail!("empty download");
     }
     if let Some(expect) = sha256 {
         let got = format!("{:x}", hasher.finalize());
@@ -71,4 +72,65 @@ fn fetch_verified(url: &str, tmp: &Path, sha256: Option<&str>) -> anyhow::Result
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::install;
+    use std::io::Cursor;
+    use std::path::PathBuf;
+
+    // a well-formed digest the test body will never hash to
+    const NEW_SHA: &str = "5e2a2b5a3a6c2f0d7f8a0b1f1e2a4e3a1c0d9e5f6a7b8c9d0e1f2a3b4c5d6e7f";
+
+    fn sha(data: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(data))
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("evolua-acquire-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_verified_file_replaces_the_model_and_keeps_the_old_one() {
+        let d = scratch("ok");
+        let dest = d.join("decision.gguf");
+        std::fs::write(&dest, b"old model").unwrap();
+        install(Cursor::new(b"new model".to_vec()), &dest, Some(&sha(b"new model"))).unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"new model");
+        assert_eq!(std::fs::read(d.join("decision.prev")).unwrap(), b"old model");
+        assert!(!d.join("decision.part").exists());
+    }
+
+    #[test]
+    fn a_checksum_mismatch_changes_nothing() {
+        let d = scratch("bad");
+        let dest = d.join("decision.gguf");
+        std::fs::write(&dest, b"old model").unwrap();
+        let err = install(Cursor::new(b"tampered".to_vec()), &dest, Some(NEW_SHA)).unwrap_err();
+        assert!(err.to_string().contains("checksum mismatch"));
+        assert_eq!(std::fs::read(&dest).unwrap(), b"old model");
+        assert!(!d.join("decision.part").exists(), "no half file left behind");
+        assert!(!d.join("decision.prev").exists());
+    }
+
+    #[test]
+    fn an_empty_body_is_refused() {
+        let d = scratch("empty");
+        let dest = d.join("decision.gguf");
+        assert!(install(Cursor::new(Vec::new()), &dest, None).is_err());
+        assert!(!dest.exists() && !d.join("decision.part").exists());
+    }
+
+    #[test]
+    fn the_checksum_comparison_ignores_case() {
+        let d = scratch("case");
+        let dest = d.join("decision.gguf");
+        install(Cursor::new(b"x".to_vec()), &dest, Some(&sha(b"x").to_uppercase())).unwrap();
+        assert!(dest.exists());
+    }
 }

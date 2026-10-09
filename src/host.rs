@@ -166,7 +166,7 @@ fn walk(root: &Path, o: &WalkOpts) -> Vec<Entry> {
                 Some("file") => md.is_file(),
                 _ => true,
             };
-            let suffix_ok = o.suffix.as_deref().map_or(true, |s| name.ends_with(s));
+            let suffix_ok = o.suffix.as_deref().is_none_or(|s| name.ends_with(s));
             if kind_ok && suffix_ok {
                 let mtime = md
                     .modified()
@@ -186,4 +186,83 @@ fn walk(root: &Path, o: &WalkOpts) -> Vec<Entry> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{walk, WalkOpts};
+    use std::collections::HashSet;
+    use std::path::{Path, PathBuf};
+
+    fn tree(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("evolua-walk-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for d in ["a/b/c", "target/deep", "it's \"odd\""] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        for f in ["top.log", "a/x.log", "a/b/y.txt", "target/z.log", "it's \"odd\"/q.log"] {
+            std::fs::write(root.join(f), b"x").unwrap();
+        }
+        root
+    }
+
+    fn opts(depth: usize, kind: Option<&str>, suffix: Option<&str>, prune: &[&str]) -> WalkOpts {
+        WalkOpts {
+            depth,
+            limit: 1000,
+            kind: kind.map(str::to_string),
+            suffix: suffix.map(str::to_string),
+            prune: prune.iter().map(|s| s.to_string()).collect::<HashSet<_>>(),
+        }
+    }
+
+    fn rel(root: &Path, o: &WalkOpts) -> Vec<String> {
+        let mut v: Vec<String> = walk(root, o)
+            .into_iter()
+            .map(|e| e.path[root.to_string_lossy().len() + 1..].to_string())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn depth_kind_and_prune_match_find() {
+        let r = tree("dirs");
+        assert_eq!(rel(&r, &opts(2, Some("dir"), None, &["target"])), ["a", "a/b", "it's \"odd\""]);
+        assert_eq!(rel(&r, &opts(1, Some("file"), None, &[])), ["top.log"]);
+    }
+
+    #[test]
+    fn suffix_filters_files_and_odd_names_are_plain_data() {
+        let r = tree("logs");
+        assert_eq!(
+            rel(&r, &opts(3, Some("file"), Some(".log"), &["target"])),
+            ["a/x.log", "it's \"odd\"/q.log", "top.log"]
+        );
+    }
+
+    #[test]
+    fn limit_stops_the_walk() {
+        let r = tree("limit");
+        let mut o = opts(5, None, None, &[]);
+        o.limit = 3;
+        assert_eq!(walk(&r, &o).len(), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_are_not_followed() {
+        let r = tree("links");
+        std::os::unix::fs::symlink(&r, r.join("a/loop")).unwrap();
+        let all = rel(&r, &opts(6, None, None, &[]));
+        assert!(all.iter().all(|p| !p.contains("loop")), "{all:?}");
+    }
+
+    #[test]
+    fn files_carry_size_and_mtime() {
+        let r = tree("meta");
+        let e = walk(&r, &opts(1, Some("file"), None, &[])).pop().unwrap();
+        assert_eq!(e.size, 1);
+        assert!(e.mtime > 0.0 && !e.dir);
+    }
 }

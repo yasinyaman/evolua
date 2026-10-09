@@ -128,6 +128,8 @@ local function blend_conf(rule_c, llm_c)
   return math.max(0, math.min(combined, ceiling))
 end
 
+Reasoner._parse_schema, Reasoner._blend_conf = parse_schema, blend_conf   -- for tests
+
 function Reasoner:step()
   local ctx = self.ctx
   if self.ctx.kernel.tick == self.last_tick then return end

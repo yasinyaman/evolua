@@ -82,8 +82,14 @@ In plain-Lua mode the data home defaults to next to the script (so artifacts lan
 
 ### Tests & reset
 
-There is **no automated test suite** — verification is done with bounded runs
-(`--ticks N --tick-seconds 0.2`) and inspecting `reports/` and `state/evolua.log`.
+Two layers:
+- **Unit tests** for the pure parts — `lua tests/run.lua` (stock Lua, no host; serializer,
+  memory, bus reward math, rule DSL, model ladder, reasoner parsing, RAG, goal matching,
+  platform helpers, log rotation) and `cargo test` (`--features acquire` adds the checksum
+  tests). Add a `tests/test_*.lua` file to `FILES` in `tests/run.lua` for a new area.
+- **Behavior** — bounded runs (`--ticks N --tick-seconds 0.2`) and inspecting `reports/` and
+  `state/evolua.log`; the scripted suite is in docs/TESTING.md.
+
 `./clean.sh` wipes all evolved organs/reports/memory so the next run starts from a
 never-lived state (use `EVOLUA_HOME=/path ./clean.sh` for a custom home).
 

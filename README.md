@@ -343,8 +343,9 @@ actions and downloads a better decision model without asking.
 
 ## Testing & reset
 
-There is **no unit-test harness** — verification is done with bounded runs and inspecting
-`reports/` and `state/`. A full bounded verification suite lives at
+Unit tests cover the pure parts: `lua tests/run.lua` (stock Lua, no build needed) and
+`cargo test`. Behavior is verified with bounded runs and inspecting `reports/` and `state/`.
+A full bounded verification suite lives at
 [docs/TESTING.md](docs/TESTING.md) — 25 checks, last run all green: build, base run, colony
 comms, intelligent split, purpose crystallization, power-aware hold-off, generalist clones,
 supervisor roundtrip, cross-life memory, S4 purpose-learning, and environment exploration.

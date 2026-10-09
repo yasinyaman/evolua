@@ -1,8 +1,9 @@
 # Testing & verification
 
-EvoLua has **no unit-test harness**. It is a living process, so verification is done with
-**bounded runs** (`--ticks N --tick-seconds 0.2`) and inspecting the artifacts it leaves in
-`reports/`, `state/`, and `colony/`. This page documents the bounded suite that exercises
+The pure parts have unit tests — `lua tests/run.lua` (stock Lua, no host) and `cargo test`.
+The organism as a whole is a living process, so its behavior is verified with **bounded runs**
+(`--ticks N --tick-seconds 0.2`) and by inspecting the artifacts it leaves in `reports/`,
+`state/`, and `colony/`. This page documents the bounded suite that exercises
 every subsystem, what each check proves, and the last recorded result.
 
 ## Running the suite

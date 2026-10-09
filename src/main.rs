@@ -195,3 +195,36 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{embedded_modules, module_name, resolve_home};
+
+    #[test]
+    fn module_names_follow_require_paths() {
+        assert_eq!(module_name("core/kernel.lua"), "core.kernel");
+        assert_eq!(module_name("sensors/fswatch.lua"), "sensors.fswatch");
+        assert_eq!(module_name("config.lua"), "config");
+        assert_eq!(module_name(r"core\kernel.lua"), "core.kernel");
+    }
+
+    #[test]
+    fn only_organism_source_is_embedded() {
+        let paths: Vec<String> = embedded_modules().into_iter().map(|(p, _)| p).collect();
+        for want in ["config.lua", "core/kernel.lua", "core/serialize.lua", "sensors/fswatch.lua"] {
+            assert!(paths.iter().any(|p| p == want), "missing {want}");
+        }
+        for p in &paths {
+            assert!(p == "config.lua" || p.starts_with("core/") || p.starts_with("sensors/"), "unexpected {p}");
+        }
+    }
+
+    #[test]
+    fn evolua_home_overrides_the_os_default() {
+        // the only test that touches EVOLUA_HOME, so no other test races it
+        std::env::set_var("EVOLUA_HOME", "/tmp/evolua-test-home");
+        assert_eq!(resolve_home(), std::path::PathBuf::from("/tmp/evolua-test-home"));
+        std::env::remove_var("EVOLUA_HOME");
+        assert_ne!(resolve_home(), std::path::PathBuf::from("/tmp/evolua-test-home"));
+    }
+}

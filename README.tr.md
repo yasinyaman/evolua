@@ -247,7 +247,8 @@ sormadan daha iyi bir karar modeli indirir.
 
 ## Test & sıfırlama
 
-Birim test koşumu **yoktur** — doğrulama sınırlı koşularla yapılır. Tam doğrulama suite'i
+Saf parçalar için birim testler: `lua tests/run.lua` (derleme gerekmez) ve `cargo test`.
+Davranış sınırlı koşularla doğrulanır. Tam doğrulama suite'i
 [docs/TESTING.md](docs/TESTING.md)'de (**25 kontrol, hepsi yeşil**). Gerçek bir koşunun
 açıklamalı çıktısı: [docs/DEMO.tr.md](docs/DEMO.tr.md).
 
