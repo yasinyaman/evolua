@@ -241,6 +241,30 @@ function Evolver:rehydrate()
       fit[name] = nil
     end
   end
+  -- protected organs don't evolve (cull-exempt singletons), so each is just its
+  -- blueprint rendered with its genes. Re-render any whose source differs from
+  -- the current blueprint: a fix to colony/supervisor/explorer then reaches
+  -- organs seeded by an older version instead of waiting for ./clean.sh.
+  for name, rec in pairs(self.organs) do
+    local tpl, loaded = Templates[rec.template], self.ctx.registry.loaded[name]
+    if is_protected(rec.template) and loaded and loaded.path then
+      for k, v in pairs(tpl.default_genes or {}) do    -- genes the blueprint gained since
+        if rec.genes[k] == nil then rec.genes[k] = deepcopy(v) end
+      end
+      local src = tpl.build(name, rec.genes)
+      local fh = io.open(loaded.path, "r")
+      local cur = fh and fh:read("*a")
+      if fh then fh:close() end
+      if cur ~= src then
+        local out = io.open(loaded.path, "w")
+        if out then
+          out:write(src); out:close()
+          self.ctx.log:info("refreshed organ '%s' from the current <%s> blueprint", name, rec.template)
+          self.ctx.registry:load(loaded.path)
+        end
+      end
+    end
+  end
 end
 
 -- MAP-Elites behavior descriptor: derive, from the bus subscriptions (the ground
