@@ -97,9 +97,18 @@ never-lived state (use `EVOLUA_HOME=/path ./clean.sh` for a custom home).
 `src/main.rs` is a thin shell: it embeds the entire `lua/` tree via `rust-embed`, registers
 each module into `package.preload` (so the organism's `require("core.kernel")` resolves from
 memory — no files on disk), resolves a writable data home, and injects globals
-`EVOLUA_HOME`, `arg`, and — when feature-gated — `llm_complete(system,user,max)` (`src/llm.rs`)
-and `model_acquire(url,dest,sha)` (`src/acquire.rs`). If the LLM feature is off or no model
-resolves, those globals are simply absent and the Lua side detects that and uses rules.
+`EVOLUA_HOME`, `arg`, the always-on filesystem helpers `host_list_dir` / `host_walk` /
+`host_mkdir` / `host_cwd` (`src/host.rs`), and — when feature-gated —
+`llm_complete(system,user,max)` (`src/llm.rs`) and `model_acquire(url,dest,sha)`
+(`src/acquire.rs`). If the LLM feature is off or no model resolves, those globals are simply
+absent and the Lua side detects that and uses rules. Only `lua/core/`, `lua/sensors/`,
+`config.lua` and `main.lua` are embedded — never the runtime dirs a plain-Lua run leaves under `lua/`.
+
+**Never splice a path or other data into a shell command.** Go through `core/platform.lua`:
+`list_dir` / `walk` / `mkdir_p` / `cwd` use the host helpers when present and quoted shell
+commands otherwise; `shq` quotes one argument (POSIX `'…'`, Windows `"…"`); `safe_path` vets a
+path before it joins perception. Sandboxed organs can't `require` core, so the kernel hands them
+the same module as `ctx.platform`.
 
 ### Host-side autonomic watch — the "brainstem" (`src/supervisor.rs`)
 

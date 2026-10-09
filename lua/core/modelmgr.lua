@@ -6,6 +6,7 @@
 -- same policy + approval inbox as everything else. See docs/ROADMAP.md §Faz 4.
 
 local HostCaps = require("core.hostcaps")
+local P        = require("core.platform")
 
 local ModelMgr = {}
 ModelMgr.__index = ModelMgr
@@ -29,7 +30,7 @@ local LADDER = {
 function ModelMgr.new(ctx)
   local self = setmetatable({ ctx = ctx }, ModelMgr)
   self.models_dir = (ctx.cfg.reports_dir:gsub("/reports$", "")) .. "/models"
-  os.execute('mkdir -p "' .. self.models_dir .. '" 2>/dev/null')
+  P.mkdir_p(self.models_dir)
   self.locked = {}   -- tier -> why: acquisition failed in THIS life, don't retry it
   return self
 end

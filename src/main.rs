@@ -23,6 +23,7 @@ use rust_embed::RustEmbed;
 mod llm;
 #[cfg(feature = "acquire")]
 mod acquire;
+mod host;
 mod supervisor;
 
 // Only the organism's SOURCE is embedded: core/, sensors/, config.lua, main.lua.
@@ -115,6 +116,11 @@ fn run() -> mlua::Result<()> {
         arg_tbl.set((i + 1) as i64, a)?;
     }
     globals.set("arg", arg_tbl)?;
+
+    // 3a) native filesystem helpers (host_list_dir / host_walk / host_mkdir /
+    // host_cwd) so perception doesn't build shell commands out of path names.
+    // core/platform.lua uses them when present, the shell otherwise.
+    host::register(&lua)?;
 
     // 3b) decision brain (Faz 2) — resolve & expose llm_complete(system,user,max?)
     // If no model resolves (or the feature is off), the global is absent and the

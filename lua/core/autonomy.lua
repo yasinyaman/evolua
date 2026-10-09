@@ -19,10 +19,10 @@ function Autonomy.new(ctx)
   for _, v in ipairs(ctx.cfg.safe_actions or { "throttle", "notify" }) do self.safe[v] = true end
   self.audit_path = ctx.cfg.state_dir .. "/audit.log"
   self.last_proposed = {}  -- (entity|verb) -> tick, to suppress duplicate suggestions
-  self.inbox = ctx.cfg.state_dir:gsub("/state$", "") .. "/approvals"
   -- approvals/ lives next to state/ under the data home; ensure subdirs exist
   self.inbox = (ctx.cfg.approvals_dir) or (ctx.cfg.reports_dir:gsub("/reports$", "") .. "/approvals")
-  os.execute('mkdir -p "' .. self.inbox .. '/approved" "' .. self.inbox .. '/done" 2>/dev/null')
+  P.mkdir_p(self.inbox .. "/approved")
+  P.mkdir_p(self.inbox .. "/done")
   self.traces = {}   -- outcome-credit eligibility traces (#6): {organ, entity, baseline, born}
   -- evolved rule organs emit action.request; route them through the ladder (above)
   ctx.bus:subscribe("action.request", function(ev) self:request(ev.data); return { handled = true } end, "autonomy")

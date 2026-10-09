@@ -3,6 +3,8 @@
 -- into a restricted environment, registered on the bus, and can be hot-reloaded
 -- or retired at runtime. Core code never changes — new capability = new file.
 
+local P = require("core.platform")
+
 local Registry = {}
 Registry.__index = Registry
 
@@ -85,9 +87,7 @@ end
 -- scan the plugins dir and load anything new
 function Registry:scan()
   local dir = self.dir
-  local p = io.popen and io.popen('ls -1 "' .. dir .. '" 2>/dev/null')
-  if not p then return end
-  for line in p:lines() do
+  for _, line in ipairs(P.list_dir(dir)) do
     local fname = line:match("(.+%.lua)$")
     if fname and not disabled(self.ctx.cfg, fname) then
       local name = fname:gsub("%.lua$", "")
@@ -96,7 +96,6 @@ function Registry:scan()
       end
     end
   end
-  p:close()
 end
 
 -- retire a plugin: detach its subscriptions; optionally delete its file

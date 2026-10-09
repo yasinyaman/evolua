@@ -156,6 +156,7 @@ bir organ olamazlar). Kural grameri ise `templates.lua`'da (blueprint katmanı) 
 |---|---|
 | `src/main.rs` | tek-binary host |
 | `src/supervisor.rs` | host-tarafı otonom gözcü ("beyin sapı") |
+| `src/host.rs` | yerel dosya-sistemi yardımcıları (listele / dolaş / mkdir / cwd); algı yolları shell komutuna girmez |
 | `src/llm.rs` · `src/acquire.rs` | gömülü karar beyni · model indirme |
 | `lua/core/kernel.lua` | yaşam döngüsü / tick loop; ödül-ceza → fitness |
 | `lua/core/bus.lua` | event bus — sinir sistemi |

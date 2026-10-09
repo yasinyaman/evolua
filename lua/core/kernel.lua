@@ -12,6 +12,7 @@ local WorldModel = require("core.worldmodel")
 local Reasoner   = require("core.reasoner")
 local Autonomy   = require("core.autonomy")
 local ModelMgr   = require("core.modelmgr")
+local Platform   = require("core.platform")
 
 local Kernel = {}
 Kernel.__index = Kernel
@@ -22,18 +23,18 @@ local BUILTIN_SENSORS = {
   "curiosity",                 -- Faz 3: active exploration
 }
 
-local function ensure_dir(p) os.execute('mkdir -p "' .. p .. '" 2>/dev/null') end
-
 function Kernel.new(cfg)
-  ensure_dir(cfg.plugins_dir)
-  ensure_dir(cfg.reports_dir)
-  ensure_dir(cfg.state_dir)
+  Platform.mkdir_p(cfg.plugins_dir)
+  Platform.mkdir_p(cfg.reports_dir)
+  Platform.mkdir_p(cfg.state_dir)
 
   local log = Log.new({ level = cfg.log_level, path = cfg.state_dir .. "/evolua.log" })
   local self = setmetatable({ cfg = cfg, tick = 0, running = false, sensors = {} }, Kernel)
 
   -- shared organism context handed to every subsystem & plugin
-  local ctx = { cfg = cfg, log = log, kernel = self }
+  -- ctx.platform gives sandboxed organs (which can't require core) the OS layer:
+  -- shell quoting, path checks, list_dir / walk / mkdir_p without the shell.
+  local ctx = { cfg = cfg, log = log, kernel = self, platform = Platform }
   ctx.bus      = Bus.new(log, cfg)   -- cfg carries the honest-reward tunables
   ctx.memory   = Memory.new(cfg.state_dir .. "/memory.lua")
   ctx.registry = Registry.new(ctx)

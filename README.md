@@ -220,6 +220,7 @@ table (`bus`, `memory`, `registry`, `evolver`, `worldmodel`, `reasoner`, `autono
 |---|---|
 | `src/main.rs` | single-binary host: embeds `lua/`, resolves data home, injects globals, spawns supervisor |
 | `src/supervisor.rs` | host-side autonomic watch (the "brainstem"): liveness + vitals, never enforces |
+| `src/host.rs` | native filesystem helpers (list / walk / mkdir / cwd) so perception never builds shell commands from paths |
 | `src/llm.rs` | embedded decision brain (llama-cpp-2 CPU) — `llm`/`embed_smol` feature |
 | `src/acquire.rs` | GGUF download + SHA-256 + atomic swap + rollback — `acquire` feature |
 | `lua/core/kernel.lua` | life cycle / tick loop; reward/error feedback → fitness |
@@ -235,7 +236,7 @@ table (`bus`, `memory`, `registry`, `evolver`, `worldmodel`, `reasoner`, `autono
 | `lua/core/autonomy.lua` | the L0–L4 ladder + approval inbox + safe-list + audit log; **evolved-organ action requests + outcome-credit** |
 | `lua/core/hostcaps.lua` | host probe (RAM/cores/power/disk) |
 | `lua/core/modelmgr.lua` | meta-evolution: model ladder + capacity/need decision |
-| `lua/core/platform.lua` | OS abstraction (mac/linux/win): process list, error logs, actuators |
+| `lua/core/platform.lua` | OS abstraction (mac/linux/win): process list, error logs, actuators, shell quoting, filesystem walk |
 | `lua/core/reporter.lua` | actuator: status summary + observations → Markdown reports |
 | `lua/sensors/*.lua` | `sys_metrics`, `logwatch`, `fswatch`, `introspect`, `proc_top`, `proc_errors`, `curiosity` |
 | `lua/config.lua` | all "instincts" as plain numbers (thresholds, cadences, caps, colony/purpose) |

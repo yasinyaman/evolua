@@ -154,22 +154,9 @@ T["colony"] = {
   build = function(name, genes)
     local body = "local SELF = " .. string.format("%q", name) .. "\n" .. [==[
     local cfg = ctx.cfg
+    local P = ctx.platform              -- OS layer: quoting, mkdir_p, list_dir (no raw shell)
     local function win() return cfg.is_windows end
-    local function shq(s) s = tostring(s); return '"' .. s:gsub('"', '\\"') .. '"' end
-    local function ensure_dir(p)
-      if win() then os.execute('mkdir ' .. shq(p) .. ' 2>nul')
-      else os.execute('mkdir -p ' .. shq(p) .. ' 2>/dev/null') end
-    end
-    local function list_dir(p)
-      local cmd = win() and ('dir /b ' .. shq(p) .. ' 2>nul')
-                          or  ('ls -1 ' .. shq(p) .. ' 2>/dev/null')
-      local out = {}
-      local fh = io.popen and io.popen(cmd)
-      if not fh then return out end
-      for line in fh:lines() do if line ~= "" then out[#out + 1] = line end end
-      fh:close()
-      return out
-    end
+    local shq, ensure_dir, list_dir = P.shq, P.mkdir_p, P.list_dir
     local function read_file(p)
       local fh = io.open(p, "r"); if not fh then return nil end
       local s = fh:read("*a"); fh:close(); return s
@@ -502,11 +489,12 @@ T["colony"] = {
               .. (goal and (" --goal " .. shq(goal)) or "")  -- born specialized, or generalist
             local cmd
             if win() then
-              cmd = 'cmd /c start "" /B cmd /c "set EVOLUA_HOME=' .. chome .. '&& ' .. prog .. flags .. '"'
+              -- cmd strips the outermost quote pair, leaving: set "VAR=x"&& "prog" …
+              cmd = 'cmd /c start "" /B cmd /c "set "EVOLUA_HOME=' .. chome .. '"&& ' .. shq(prog) .. flags .. '"'
             elseif cfg.embedded then
               cmd = 'EVOLUA_HOME=' .. shq(chome) .. ' ' .. shq(prog) .. flags .. ' >/dev/null 2>&1 &'
             else
-              cmd = 'lua -e ' .. shq("EVOLUA_HOME='" .. chome .. "'") .. ' ' .. shq(prog) .. flags .. ' >/dev/null 2>&1 &'
+              cmd = 'lua -e ' .. shq(string.format("EVOLUA_HOME=%q", chome)) .. ' ' .. shq(prog) .. flags .. ' >/dev/null 2>&1 &'
             end
             local reasons = {}
             if why.eager then reasons[#reasons + 1] = "eager" end
@@ -628,24 +616,36 @@ T["explorer"] = {
   build = function(name, genes)
     local body = "local SELF = " .. string.format("%q", name) .. "\n" .. [==[
     local cfg = ctx.cfg
-    local function shq(s) s = tostring(s); return '"' .. s:gsub('"', '\\"') .. '"' end
+    local P = ctx.platform              -- OS layer: walk / list_dir without a shell, path checks
     local function run(cmd)
       local p = io.popen and io.popen(cmd); if not p then return "" end
       local o = p:read("*a") or ""; p:close(); return o
     end
-    local function lines_of(cmd)
-      local out = {}; for l in run(cmd):gmatch("[^\n]+") do out[#out + 1] = l end; return out
-    end
     local function contains(t, v) for _, x in ipairs(t or {}) do if x == v then return true end end return false end
     -- skip the organism's OWN output dirs (no self-referential perception loops)
-    -- and known-huge build/vcs dirs (don't drown fswatch).
-    local SKIP = { target = true, [".git"] = true, node_modules = true, build = true,
-                   [".cargo"] = true, dist = true, [".svn"] = true, [".hg"] = true, ["__pycache__"] = true }
+    -- and known-huge build/vcs dirs (don't drown fswatch) — never even descended into.
+    local PRUNE = { "target", ".git", "node_modules", "build", ".cargo", "dist", ".svn", ".hg", "__pycache__" }
+    local SKIP = {}; for _, n in ipairs(PRUNE) do SKIP[n] = true end
     local function skip_dir(path)
-      for seg in path:gmatch("[^/]+") do if SKIP[seg] then return true end end  -- any huge/vcs segment
+      for seg in path:gmatch("[^/\\]+") do if SKIP[seg] then return true end end  -- any huge/vcs segment
       -- skip the organism's OWN data home (explore OUTWARD, not self-referentially)
       for _, d in ipairs({ cfg.colony_root, cfg.plugins_dir, cfg.reports_dir, cfg.state_dir }) do
-        if d and d ~= "" and path:sub(1, #d) == d then return true end
+        -- inside d, on a path boundary (home "/x/evo" must not swallow "/x/evolution")
+        local n = #(d or "")
+        if n > 0 and path:sub(1, n) == d and (#path == n or path:sub(n + 1, n + 1):match("[/\\]")) then
+          return true
+        end
+      end
+      return false
+    end
+    -- a discovered path joins perception only if it is safe to hand to a command
+    -- later (no quotes / metacharacters / control chars); others are logged once
+    local refused = {}
+    local function acceptable(path)
+      if P.safe_path(path) then return true end
+      if not refused[path] then
+        refused[path] = true
+        ctx.log:warn("[%s] not watching %q — unsafe characters in the path", SELF, path)
       end
       return false
     end
@@ -675,9 +675,9 @@ T["explorer"] = {
 
       if m == "fs" then
         for _, root in ipairs(roots) do
-          for _, d in ipairs(lines_of("find " .. shq(root) .. " -mindepth 1 -maxdepth " ..
-              tostring(genes.depth or 2) .. " -type d 2>/dev/null | head -n 100")) do
-            if not skip_dir(d) and not contains(cfg.watch_dirs, d) then
+          for _, e in ipairs(P.walk(root, { depth = genes.depth or 2, kind = "dir", limit = 100, prune = PRUNE })) do
+            local d = e.path
+            if not skip_dir(d) and not contains(cfg.watch_dirs, d) and acceptable(d) then
               ctx.bus:emit("env.discovery", { kind = "dir", path = d })
               if cfg.explore_expand ~= false and #(cfg.watch_dirs or {}) < (cfg.explore_max_watch or 12) then
                 table.insert(cfg.watch_dirs, d)       -- expand perception (fswatch picks it up)
@@ -691,8 +691,9 @@ T["explorer"] = {
 
       elseif m == "log" then
         for _, root in ipairs(roots) do
-          for _, f in ipairs(lines_of("find " .. shq(root) .. " -maxdepth 3 -type f -name '*.log' 2>/dev/null | head -n 50")) do
-            if not skip_dir(f) and not contains(cfg.watch_logs, f) then
+          for _, e in ipairs(P.walk(root, { depth = 3, kind = "file", suffix = ".log", limit = 50, prune = PRUNE })) do
+            local f = e.path
+            if not skip_dir(f) and not contains(cfg.watch_logs, f) and acceptable(f) then
               ctx.bus:emit("env.discovery", { kind = "log", path = f })
               if cfg.explore_expand ~= false and #(cfg.watch_logs or {}) < (cfg.explore_max_watch or 12) then
                 table.insert(cfg.watch_logs, f)       -- expand perception (logwatch tails it)
@@ -728,10 +729,8 @@ T["explorer"] = {
           local path = (os.getenv and os.getenv("PATH")) or ""
           local seen, n = {}, 0
           for dir in path:gmatch("[^" .. sep .. "]+") do
-            local lister = cfg.is_windows and ("dir /b " .. shq(dir) .. " 2>nul")
-                                            or  ("ls -1 " .. shq(dir) .. " 2>/dev/null")
-            for f in run(lister):gmatch("[^\n]+") do
-              if f ~= "" and not seen[f] then seen[f] = true; n = n + 1 end
+            for _, f in ipairs(P.list_dir(dir)) do
+              if not seen[f] then seen[f] = true; n = n + 1 end
             end
           end
           local have = {}

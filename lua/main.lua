@@ -184,11 +184,11 @@ cfg.hostcaps    = require("core.hostcaps")
 -- default exploration scope: the data home + the current working directory (the
 -- explorer can be pointed elsewhere with --explore-root). Sane default, not a
 -- security boundary — widen it freely (openness is intentional here).
+local Platform = require("core.platform")
 if not cfg.explore_roots then
   cfg.explore_roots = { BASE }
-  local ph = io.popen and io.popen("pwd 2>/dev/null")
-  local cwd = ph and ph:read("*l"); if ph then ph:close() end
-  if cwd and cwd ~= "" and cwd ~= BASE then table.insert(cfg.explore_roots, cwd) end
+  local cwd = Platform.cwd()
+  if cwd and cwd ~= BASE then table.insert(cfg.explore_roots, cwd) end
 end
 
 local Kernel = require("core.kernel")
@@ -198,15 +198,10 @@ local organism = Kernel.new(cfg)
 -- previous life already wrote one to the plugins dir, boot()'s scan + evolver:
 -- rehydrate re-adopt it, so we skip re-seeding to avoid duplicates.
 local function seed_once(template)
-  local present = false
-  local p = io.popen and io.popen('ls -1 "' .. cfg.plugins_dir .. '" 2>/dev/null')
-  if p then
-    for l in p:lines() do
-      if l:match("^gen_" .. template .. "_%d+%.lua$") then present = true; break end
-    end
-    p:close()
+  for _, l in ipairs(Platform.list_dir(cfg.plugins_dir)) do
+    if l:match("^gen_" .. template .. "_%d+%.lua$") then return end
   end
-  if not present then organism.ctx.evolver:spawn(template) end
+  organism.ctx.evolver:spawn(template)
 end
 
 if cfg.colony then seed_once("colony") end
