@@ -23,6 +23,8 @@ use rust_embed::RustEmbed;
 mod llm;
 #[cfg(feature = "acquire")]
 mod acquire;
+#[cfg(all(feature = "apple", target_os = "macos"))]
+mod apple;
 mod brain;
 mod discover;
 mod host;

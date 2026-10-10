@@ -5,6 +5,7 @@
 // A failed load leaves the current brain in place. Backends:
 //   gguf / embedded — in-process llama.cpp (feature `llm`; embedded needs `embed_smol`)
 //   service         — a running Ollama / OpenAI-compatible server (feature `service`)
+//   apple           — macOS's on-device Foundation model (feature `apple`, macOS 26+)
 //
 // Lua API:
 //   host_brain_kinds()               -> { "gguf", "embedded", … } compiled into this binary
@@ -12,6 +13,7 @@
 //   host_brain_complete(sys, user, max?) -> text | nil
 //   host_brain_info()                -> {kind, id, name, params_b}  (kind="none" if unloaded)
 //   host_services(urls?)             -> { {url, api, models={ {name, size_mb, params_b} }} }  (`service`)
+//   host_apple_status()              -> "available" | why not                                  (`apple`)
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -28,6 +30,8 @@ enum Backend {
     Local(crate::llm::Brain),
     #[cfg(feature = "service")]
     Service(crate::service::Client),
+    #[cfg(all(feature = "apple", target_os = "macos"))]
+    Apple(crate::apple::Model),
 }
 
 impl Backend {
@@ -38,6 +42,8 @@ impl Backend {
             Backend::Local(ref b) => b.complete(system, user, max_tokens),
             #[cfg(feature = "service")]
             Backend::Service(ref c) => c.complete(system, user, max_tokens),
+            #[cfg(all(feature = "apple", target_os = "macos"))]
+            Backend::Apple(ref m) => m.complete(system, user, max_tokens),
         }
     }
 }
@@ -56,6 +62,7 @@ fn kinds() -> Vec<&'static str> {
         (cfg!(feature = "llm"), "gguf"),
         (cfg!(feature = "embed_smol"), "embedded"),
         (cfg!(feature = "service"), "service"),
+        (cfg!(all(feature = "apple", target_os = "macos")), "apple"),
     ]
         .into_iter()
         .filter_map(|(on, kind)| on.then_some(kind))
@@ -90,6 +97,8 @@ fn load(spec: &Table, home: &Path) -> anyhow::Result<(Backend, String, String)> 
             let client = crate::service::Client::connect(&url, api.as_deref().unwrap_or("openai"), &model)?;
             Ok((Backend::Service(client), format!("service:{url}#{model}"), model))
         }
+        #[cfg(all(feature = "apple", target_os = "macos"))]
+        "apple" => Ok((Backend::Apple(crate::apple::Model::open()?), "apple:on-device".into(), "Apple on-device model".into())),
         other => anyhow::bail!("this binary can't load a '{other}' brain (compiled kinds: {:?})", kinds()),
     }
 }
@@ -117,6 +126,9 @@ pub fn register(lua: &Lua, home: PathBuf) -> mlua::Result<()> {
     let slot: Rc<RefCell<Option<Active>>> = Rc::new(RefCell::new(None));
 
     g.set("host_brain_kinds", lua.create_function(|_, ()| Ok(kinds()))?)?;
+
+    #[cfg(all(feature = "apple", target_os = "macos"))]
+    g.set("host_apple_status", lua.create_function(|_, ()| Ok(crate::apple::status()))?)?;
 
     #[cfg(feature = "service")]
     g.set(
