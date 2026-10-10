@@ -68,11 +68,17 @@ function Kernel:boot()
   ctx.log:info("\27[1mEvoLua\27[0m booting — mode=%s%s", self.cfg.mode,
     (self.cfg.goal and self.cfg.goal ~= "") and (" goal=\"" .. self.cfg.goal .. "\"") or "")
 
-  -- this life's decision brain (core/brain.lua); the model manager then notes a
-  -- brain switch (fresh samples) or a switched-to brain that didn't come back
-  ctx.brain = Brain.select(self.cfg, ctx.modelmgr.models_dir, ctx.log,
-    HostCaps.probe(ctx.modelmgr.models_dir).ram_total_mb)
-  ctx.modelmgr:on_boot(ctx.brain)
+  -- this life's decision brain (core/brain.lua): the biggest usable one on this
+  -- machine if it beats the default, else the default. Brains backed off for
+  -- failing, being rolled back or being too slow are skipped. The model manager
+  -- then starts fresh samples and puts a machine-found brain on probation.
+  local mm = ctx.modelmgr
+  local how, default
+  ctx.brain, how, default = Brain.select(self.cfg, mm.models_dir, ctx.log, {
+    ram_total_mb = HostCaps.probe(mm.models_dir).ram_total_mb,
+    skip = function(key) return mm:blocked(key) end,
+  })
+  mm:on_boot(ctx.brain, how, default)
 
   -- load built-in sensors
   for _, name in ipairs(BUILTIN_SENSORS) do

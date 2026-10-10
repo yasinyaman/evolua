@@ -221,20 +221,31 @@ indirmeden önce **makinede zaten olan** bir beyne bakar:
 | `gguf` | başka bir aracın indirdiği GGUF — Ollama'nın modelleri (düz GGUF blob'ları), LM Studio, Jan, GPT4All, Hugging Face ve llama.cpp önbellekleri, `$EVOLUA_MODEL_DIRS` / `model_dirs` | `llm` |
 | `service` | localhost'ta çalışan Ollama, LM Studio, llama-server ya da başka bir OpenAI-uyumlu sunucu (veya `$EVOLUA_SERVICE_URLS`) — EvoLua asla başlatmaz | `service` |
 | `apple` | macOS'un cihaz-içi Foundation modeli (macOS 26+, Apple Intelligence açık; OS yönetir, bizim sürecimizde RAM tutmaz) | `apple` |
-| `embedded` | binary'ye gömülü SmolLM2-135M (`scripts/fetch_model.sh`) | `embed_smol` |
+| `embedded` | binary'ye gömülü SmolLM2-135M (`scripts/fetch_model.sh`) — varsayılan beyin | `embed_smol` |
 
-Açılışta (`--brain auto`, varsayılan) `core/brain.lua` yüklenebilen ilkini alır: `$EVOLUA_MODEL`
-→ model yöneticisinin kaydettiği seçim → indirilmiş `models/decision.gguf` → **makinede olup
-sığan en güçlü beyin** (`model_max_mb`, varsayılan 2000 MB, ve fiziksel RAM'in `model_ram_share`
-payı), türler `brain_order` sırasıyla (varsayılan apple → service → gguf) → gömülü model →
-kurallar. `--brain <tür>` (ya da `EVOLUA_BRAIN`) seçimi daraltır, `--brain rules` modelleri
-kapatır. Bulunan modeller, onları yükleyemeyen bir build'de bile raporlarda
-`discovered model: …` olarak görünür; her rapor etkin beyni yazar.
+**Organizmanın kendi varsayılan beyni değişmez**: binary'ye gömülü model (ya da indirdiği bir
+`models/decision.gguf`). Ama makinede **kullanabileceği daha büyük bir beyin** varsa onun yerine
+o kullanılır; varsayılan yedek olarak kalır. Açılışta (`--brain auto`, varsayılan)
+`core/brain.lua` şunu seçer:
 
-Sonra beyin kurallara fazla sık düşerse model yöneticisi önce **`model_adopt`** önerir —
-makinedeki bir sonraki daha güçlü beyne indirmesiz geçiş — ancak sonra indirme merdivenine
-başvurur. Her geçiş anında etkin olur, taze örneklerle değerlendirilir ve yeni beyin daha kötü
-çıkarsa geri alınır; sonraki bir yaşamda yüklenemeyen bir beyin bırakılır.
+1. `$EVOLUA_MODEL` verilmişse o (her zaman kazanır);
+2. yoksa makinedeki, türü ne olursa olsun, varsayılandan büyük, sığan (fiziksel RAM'in
+   `model_ram_share` payı, varsayılan %25; isteğe bağlı `model_max_mb` tavanı), geri çekilmemiş
+   ve yüklenebilen **en büyük** beyin;
+3. yoksa varsayılan; o da yoksa kurallar.
+
+"Kullanabilir" sonra pratikte sınanır. Makinede bulunan beyin deneme süresinde başlar; kurallara
+`model_fallback_rate`'ten sık düşerse varsayılana dönülür. Karar başına `brain_max_seconds`'tan
+(varsayılan 10 sn; ısınma yanıtı sayılmaz) yavaşsa bir küçüğüne inilir. İki durumda da o beyin
+geri çekilir, sonraki yaşam doğru beyinden başlar. `--brain <tür>` (ya da `EVOLUA_BRAIN`) seçimi
+daraltır, `--brain rules` modelleri kapatır. Bulunan modeller, onları yükleyemeyen bir build'de
+bile raporlarda `discovered model: …` olarak görünür; her rapor etkin beyni yazar.
+
+Yaşam içinde beyin kurallara fazla sık düşerse model yöneticisi önce **`model_adopt`** önerir —
+makinedeki bir sonraki büyük beyne indirmesiz geçiş — ancak sonra indirme merdivenine başvurur
+(kullanılan beyinden küçük bir seviyeyi asla indirmez). Her geçiş anında etkin olur, taze
+örneklerle değerlendirilir ve yeni beyin daha kötü çıkarsa geri alınır; sonraki bir yaşamda
+yüklenemeyen bir beyin bırakılır.
 
 ## Veri evi düzeni (`$EVOLUA_HOME`)
 
@@ -244,7 +255,7 @@ reports/    zaman damgalı Markdown raporlar
 state/      memory.lua · evolua.log · audit.log · heartbeat · vitals · supervisor.log
             evolution.log (jenerasyon metrikleri) · repertoire.txt (MAP-Elites QD haritası)
 approvals/  pending-*.md → (sen) approved/ → done/
-models/     indirilen modeller + current_tier · brain.lua (model yöneticisinin seçtiği beyin)
+models/     indirilen modeller + current_tier
 colony/     peers/<id> · inbox/<id>/ · clone.lock · genepool/ (yatay gen transferi)
             children/<id>/ (klon alt-evleri; inherited.lua = dikey gen transferi)
             lineage.log (amaç defteri) · outcomes/<id> (S4 ödül hasadı)

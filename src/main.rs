@@ -129,9 +129,9 @@ fn run() -> mlua::Result<()> {
     host::register(&lua)?;
 
     // 3b) decision brain — host_brain_kinds / _load / _complete / _info. Nothing
-    // is loaded here: core/brain.lua picks the brain at boot (explicit model,
-    // the model manager's saved choice, a downloaded or embedded model, or one
-    // already on the machine) and points the reasoner's llm_complete at it.
+    // is loaded here: core/brain.lua picks the brain at boot (an explicit model,
+    // else a bigger usable one already on the machine, else the organism's own
+    // default — downloaded or embedded) and points the reasoner's llm_complete at it.
     // With no backend compiled in, the reasoner falls back to rules.
     brain::register(&lua, home.clone())?;
 

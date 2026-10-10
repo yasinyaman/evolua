@@ -284,21 +284,32 @@ one, EvoLua first looks for a brain **already on the machine**:
 | `gguf` | a GGUF another tool already downloaded — Ollama's models (plain GGUF blobs), LM Studio, Jan, GPT4All, the Hugging Face and llama.cpp caches, `$EVOLUA_MODEL_DIRS` / `model_dirs` | `llm` |
 | `service` | a running Ollama, LM Studio, llama-server or other OpenAI-compatible server on localhost (or `$EVOLUA_SERVICE_URLS`) — never started by EvoLua | `service` |
 | `apple` | macOS's on-device Foundation model (macOS 26+, Apple Intelligence on; managed by the OS, no RAM in our process) | `apple` |
-| `embedded` | SmolLM2-135M baked into the binary (`scripts/fetch_model.sh`) | `embed_smol` |
+| `embedded` | SmolLM2-135M baked into the binary (`scripts/fetch_model.sh`) — the default brain | `embed_smol` |
 
-At boot (`--brain auto`, the default) `core/brain.lua` takes the first that loads:
-`$EVOLUA_MODEL` → the model manager's saved choice → a downloaded `models/decision.gguf` → the
-**strongest brain on the machine that fits** (`model_max_mb`, default 2000 MB, and
-`model_ram_share` of physical RAM), trying kinds in `brain_order` (default apple → service →
-gguf) → the embedded model → rules. `--brain <kind>` (or `EVOLUA_BRAIN`) restricts the choice,
-`--brain rules` turns models off. Discovered models show up in reports as `discovered model: …`
-even in a build that can't load them, and every report names the active brain.
+**The organism's own default brain never changes**: the model built into the binary (or a
+`models/decision.gguf` it downloaded). But when the machine has a **bigger brain it can use**,
+that one is used instead, and the default stays the fallback. At boot (`--brain auto`, the
+default) `core/brain.lua` picks:
 
-Later, when the brain falls back to rules too often, the model manager first proposes
-**`model_adopt`** — switching to the next stronger brain on the machine, with no download —
-and only then the download ladder. Every switch takes effect immediately, is judged on fresh
-samples, and is rolled back if the new brain does worse; a switched-to brain that doesn't load
-in a later life is dropped.
+1. `$EVOLUA_MODEL`, if set (always wins);
+2. else the **biggest** brain on the machine, of any kind, that is bigger than the default,
+   fits (`model_ram_share` of physical RAM, default 25%; optional `model_max_mb` cap), hasn't
+   been backed off, and loads;
+3. else the default; else rules.
+
+"Can use" is then checked in practice. A machine brain starts on probation and goes back to the
+default if it falls back to rules more often than `model_fallback_rate`. A brain slower than
+`brain_max_seconds` per decision (default 10 s; the warm-up answer isn't counted) steps down to
+the next smaller one. Either way it is backed off, so the next life starts at the right brain.
+`--brain <kind>` (or `EVOLUA_BRAIN`) restricts the choice, `--brain rules` turns models off.
+Discovered models show up in reports as `discovered model: …` even in a build that can't load
+them, and every report names the active brain.
+
+Later in a life, when the brain falls back to rules too often, the model manager first proposes
+**`model_adopt`** — the next bigger brain on the machine, with no download — and only then the
+download ladder (never a tier smaller than the brain in use). Every switch takes effect
+immediately, is judged on fresh samples, and is rolled back if the new brain does worse; a
+switched-to brain that doesn't load in a later life is dropped.
 
 ## Data home layout (`$EVOLUA_HOME`)
 
@@ -309,7 +320,7 @@ state/      memory.lua (cross-life memory) · evolua.log · audit.log
             evolution.log (per-generation metrics) · repertoire.txt (MAP-Elites QD map)
             heartbeat · vitals · supervisor.log   (Phase 5: host watch)
 approvals/  pending-*.md → (you) approved/ → done/
-models/     downloaded models + current_tier (Phase 4) · brain.lua (the brain the model manager chose)
+models/     downloaded models + current_tier (Phase 4)
 colony/     peers/<id> beacons · inbox/<id>/ mailboxes · clone.lock · genepool/ (HGT)
             children/<id>/ (clone sub-homes; inherited.lua = vertical gene transfer)
             lineage.log (purpose ledger) · outcomes/<id> (S4 purpose payoff)

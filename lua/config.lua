@@ -61,14 +61,15 @@ return {
   curiosity        = 0.3,        -- 0 = passive · 1 = constantly explore the system
 
   -- decision brain (core/brain.lua) — which model the reasoner thinks with.
-  -- auto: $EVOLUA_MODEL → the model manager's saved choice → models/decision.gguf
-  -- → the strongest brain already on this machine that fits (kinds tried in
-  -- brain_order: the OS's on-device model, a running local LLM service, a GGUF
-  -- another tool downloaded) → the embedded model → rules. --brain / $EVOLUA_BRAIN.
-  brain           = "auto",   -- auto | rules | gguf | embedded | service | apple
-  brain_order     = { "apple", "service", "gguf" },
-  model_max_mb    = 2000,     -- never pick a model bigger than this (MB: GGUF file / service model)
-  model_ram_share = 0.25,     -- …nor one bigger than this share of physical RAM
+  -- The organism's own DEFAULT never changes: models/decision.gguf if it downloaded
+  -- one, else the model built into the binary. If this machine has a BIGGER brain
+  -- it can use (a GGUF another tool fetched, a running local LLM server, the OS's
+  -- on-device model), the biggest such is used instead; the default stays the
+  -- fallback. $EVOLUA_MODEL always wins. --brain / $EVOLUA_BRAIN restrict the kind.
+  brain             = "auto",   -- auto | rules | gguf | embedded | service | apple
+  model_ram_share   = 0.25,     -- "fits": a model may take at most this share of physical RAM
+  model_max_mb      = nil,      -- optional hard cap on model size (MB), e.g. 2000
+  brain_max_seconds = 10,       -- "fast enough": slower on average than this → step down to a smaller one
 
   -- model meta-evolution (Faz 4) — size the decision model to the host
   model_unattended    = false,   -- download a better brain WITHOUT approval (bounded to ladder url+sha); --unattended

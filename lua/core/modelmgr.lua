@@ -82,14 +82,13 @@ function ModelMgr:record_upgrade(rec)
   self.ctx.memory:save()
 end
 
--- a ladder tier was downloaded to dest: switch to it now (it also stays the
--- saved choice for later lives)
+-- a ladder tier was downloaded to dest: switch to it now (as models/decision.gguf
+-- it is also the organism's default brain in later lives)
 function ModelMgr:acquired(act, dest)
   local from_tier, from_spec = self:current_index(), Brain.spec
   local spec = { kind = "gguf", path = dest, name = act.tier_name, params_b = LADDER[act.tier] and LADDER[act.tier].params_b }
   local ok, info = Brain.load(spec)
   self:set_index(act.tier)
-  if ok then Brain.save(self.models_dir, spec) end
   self:record_upgrade({ kind = "download", key = act.tier, from_tier = from_tier, to_tier = act.tier,
                         from_spec = from_spec, to_spec = spec, to_id = ok and info.id or nil })
   return ok, info
@@ -97,20 +96,21 @@ end
 
 -- switch to a brain already on this machine, now
 function ModelMgr:adopt(spec)
-  local key = "brain:" .. tostring(spec.name or spec.path or spec.kind)
+  local key = Brain.key(spec)
   local from_spec = Brain.spec
   local ok, info = Brain.load(spec)
   if not ok then
     self:record_failure(key, tostring(info))
     return false, info
   end
-  Brain.save(self.models_dir, spec)
   self:record_upgrade({ kind = "adopt", key = key, from_spec = from_spec, to_spec = spec, to_id = info.id })
   return true, info
 end
 
--- a new life started with `info` as its brain (core/brain.lua chose it)
-function ModelMgr:on_boot(info)
+-- a new life started with `info` as its brain. how/default come from
+-- Brain.select: "machine" means a brain bigger than the default was found on
+-- this machine and is now on probation — judged on fresh samples like any switch.
+function ModelMgr:on_boot(info, how, default)
   local md = self.ctx.memory.data
   if md.brain_id ~= info.id then           -- a different brain than last life: fresh samples
     local c = md.counters or {}
@@ -120,13 +120,51 @@ function ModelMgr:on_boot(info)
   local up = md.model_upgrade
   if up and up.to_id and not up.judged and info.id ~= up.to_id and (self.ctx.cfg.brain or "auto") == "auto" then
     -- the brain we switched to didn't come back (file gone, failed to load,
-    -- service down): back off from it and restore the previous choice
+    -- service down): back off from it
     self.ctx.log:warn("modelmgr: %s did not load this life — dropping it",
       tostring(up.to_spec and up.to_spec.name or up.to_id))
     self:record_failure(up.key, "did not load")
-    Brain.save(self.models_dir, up.from_spec)
-    md.model_upgrade = nil
+    md.model_upgrade, up = nil, nil
   end
+  local key = Brain.key(Brain.spec)
+  md.brain_ok = md.brain_ok or {}
+  if how == "machine" and not md.brain_ok[key] and not (up and up.to_id == info.id) then
+    self:record_upgrade({ kind = "machine", key = key, from_spec = default, to_spec = Brain.spec, to_id = info.id })
+  end
+end
+
+-- is the loaded brain too slow to be usable here? Then step down: the next
+-- smaller brain on this machine that is still bigger than the default, else the
+-- default. The slow one is backed off, so the next life starts lower too.
+function ModelMgr:check_speed(caps)
+  local cfg = self.ctx.cfg
+  local secs = Brain.mean_seconds(3)
+  local limit = cfg.brain_max_seconds or 10
+  if not secs or secs <= limit or not Brain.spec then return end
+  local default = Brain.default(self.models_dir)
+  local cur = Brain.info()
+  if (cfg.brain or "auto") ~= "auto" or (os.getenv("EVOLUA_MODEL") or "") ~= ""
+     or (default and Brain.key(default) == Brain.key(Brain.spec)) then
+    return                                  -- explicit, or already the default floor
+  end
+  local key = Brain.key(Brain.spec)
+  self:record_failure(key, string.format("too slow: %.1fs per decision (limit %ss)", secs, limit))
+  if self.ctx.memory.data.model_upgrade and self.ctx.memory.data.model_upgrade.key == key then
+    self.ctx.memory.data.model_upgrade = nil
+  end
+  local floor = default and (default.params_b or 0) or 0
+  local nxt
+  for _, c in ipairs(Brain.bigger(cfg, floor, caps.ram_total_mb, function(k) return self:blocked(k) end)) do
+    if c.params_b < (cur.params_b or math.huge) then nxt = c.spec; break end
+  end
+  local target = nxt or default or { kind = "none" }
+  local ok, info = Brain.load(target)
+  local msg = string.format("%s is too slow here (%.1fs per decision > %ss) — %s %s", tostring(cur.name), secs, limit,
+    ok and "switched to" or "could not switch to", ok and tostring(info.name) or tostring(info))
+  self.ctx.log:warn("modelmgr: %s", msg)
+  if self.ctx.autonomy then self.ctx.autonomy:audit("brain: " .. msg) end
+  if ok then self.ctx.memory.data.brain_id = info.id end
+  return true
 end
 
 local function spec_name(spec) return spec and (spec.name or spec.path or spec.kind) or "rules" end
@@ -140,8 +178,8 @@ function ModelMgr:fallback_rate()
 end
 
 -- undo the last switch, now: load the brain it replaced again (rules if there
--- was none) and make that the saved choice; back off the rolled-back brain so
--- the next check doesn't pick it straight away. For a download, also put the
+-- was none) and back off the rolled-back brain, so neither the next check nor
+-- the next life's boot picks it straight away. For a download, also put the
 -- files back: acquire.rs keeps the replaced model as <name>.prev (decision.gguf
 -- → decision.prev); the downloaded file is set aside as <file>.rejected.
 function ModelMgr:rollback()
@@ -149,7 +187,7 @@ function ModelMgr:rollback()
   local up = md.model_upgrade
   if not up then return false, "no recorded upgrade to roll back" end
   local to_name
-  if up.kind == "adopt" then
+  if up.kind == "adopt" or up.kind == "machine" then
     to_name = spec_name(up.to_spec)
   else                                     -- a download (records from older versions too)
     local cur = self:current_index()
@@ -168,7 +206,6 @@ function ModelMgr:rollback()
     to_name = LADDER[cur].name
   end
   Brain.load(up.from_spec or { kind = "none" })
-  Brain.save(self.models_dir, up.from_spec)
   md.model_upgrade = nil
   md.brain_id = Brain.info().id
   self:record_failure(up.key or up.to, "rolled back")
@@ -238,7 +275,15 @@ function ModelMgr:judge_upgrade(info)
   local rate = self:fallback_rate()
   if not rate then return end
   up.judged = true                           -- one verdict per switch, not one per check
-  if rate <= (up.fallback_before or 1) then return end   -- the new brain earns its keep
+  -- vs the brain it replaced; a brain picked at boot has no "before" here, so it
+  -- must simply stay under the bottleneck threshold
+  local limit = up.fallback_before or (up.kind == "machine" and (self.ctx.cfg.model_fallback_rate or 0.4)) or 1
+  if rate <= limit then                      -- the new brain earns its keep
+    local md2 = self.ctx.memory.data
+    md2.brain_ok = md2.brain_ok or {}
+    if up.key then md2.brain_ok[up.key] = true end
+    return
+  end
   local to_name = up.to_spec and spec_name(up.to_spec) or (LADDER[up.to_tier or up.to] or {}).name
   local from_name = up.from_spec and spec_name(up.from_spec) or (LADDER[up.from_tier or up.from] or {}).name or "rules"
   if self.ctx.autonomy then
@@ -267,7 +312,7 @@ function ModelMgr:adoptable(caps)
   if not cur_p and cur.kind == "gguf" then cur_p = (LADDER[self:current_index()] or {}).params_b end
   if not cur_p then return nil end         -- can't tell what "stronger" means
   for _, c in ipairs(Brain.candidates(cfg)) do  -- weakest first
-    local key = "brain:" .. tostring(c.spec.name or c.spec.path or c.kind)
+    local key = Brain.key(c.spec)
     if c.params_b > cur_p * 1.25 and Brain.fits(c, cfg, caps.ram_total_mb) and not self:blocked(key) then
       return c, key
     end
@@ -279,6 +324,7 @@ end
 function ModelMgr:step()
   local caps = HostCaps.probe(self.models_dir)
   local cur = self:current_index()
+  if self:check_speed(caps) then return { action = "step down", from = cur, to = cur } end
   local info = Brain.info()
   if self:judge_upgrade(info) then return { action = "rollback", from = cur, to = cur } end
   local bn = self:bottleneck()
@@ -310,6 +356,10 @@ function ModelMgr:step()
   self.ctx.log:debug("modelmgr: decide=%s %d→%d (%s) | bottleneck=%s ram_avail=%s cores=%s disk=%s batt=%s",
     d.action, d.from, d.to, d.reason, tostring(bn),
     tostring(caps.ram_avail_mb), tostring(caps.cores), tostring(caps.disk_free_mb), tostring(caps.on_battery))
+  if d.action == "upgrade" and (LADDER[d.to].params_b or 0) <= (info.params_b or 0) then
+    -- the brain in use (likely one found on this machine) is already bigger
+    return { action = "hold", from = cur, to = cur, reason = "current brain is bigger than the next tier" }
+  end
   if d.action == "upgrade" then
     local why = self:blocked(d.to)
     if why then

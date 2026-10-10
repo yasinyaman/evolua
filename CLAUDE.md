@@ -55,10 +55,13 @@ the pinned SmolLM2-135M-Instruct Q8_0 and checks its sha256), or the build fails
 `cargo build --release` has no such dependency. `scripts/verify_model_pin.sh` checks every
 pinned model (this one and the ladder's) against Hugging Face without downloading.
 
-**Which brain runs** is Lua policy (`core/brain.lua`, at boot): `$EVOLUA_MODEL` → the model
-manager's saved choice (`<home>/models/brain.lua`) → `<home>/models/decision.gguf` → the
-strongest brain **already on the machine** that fits `model_max_mb` / `model_ram_share`, kinds
-tried in `brain_order` (apple → service → gguf) → embedded → rules. Candidates come from
+**Which brain runs** is Lua policy (`core/brain.lua`, at boot). The organism's own default
+(`<home>/models/decision.gguf` if downloaded, else the embedded model) never changes; if the
+machine has a **bigger** brain it can use, the biggest such replaces it for the life:
+`$EVOLUA_MODEL` → biggest machine brain bigger than the default that fits `model_ram_share`
+(optional `model_max_mb`), isn't backed off and loads → the default → rules. A machine brain is
+on probation (`ModelMgr:on_boot`, judged against `model_fallback_rate`) and steps down if slower
+than `brain_max_seconds` (`ModelMgr:check_speed`); both verdicts back it off across lives. Candidates come from
 `src/discover.rs` (GGUFs of Ollama, LM Studio, Jan, GPT4All, the HF / llama.cpp caches — read from
 their headers, nothing loaded), `src/service.rs` (running local servers) and `src/apple.rs` (the
 macOS on-device model). `src/brain.rs` only loads what Lua asks for (`host_brain_load`) and
@@ -68,8 +71,8 @@ routes `llm_complete` to it; a failed load keeps the current brain. `--brain <ki
 **LLM decision quality:** the embedded SmolLM2-135M is marginal — it often can't emit the
 reasoner's strict schema and falls back to rules (watch `llm_ok` vs `llm_fallback` in
 `state/memory.lua`). A 0.5B-class model (e.g. Qwen2.5-0.5B-Instruct GGUF) produces usable
-`source="llm+rule"` decisions, and anything already on the machine (Ollama's qwen2.5-coder:1.5b,
-the Apple on-device model) is picked over the embedded brain automatically. The
+`source="llm+rule"` decisions, and a bigger brain already on the machine (Ollama's
+qwen2.5-coder:1.5b, the Apple on-device model) is used instead of the embedded one automatically. The
 reasoner prompt (`reasoner.lua` `SCHEMA`) carries a worked example — without it even Qwen echoes
 the option menus instead of choosing, so keep the example if you touch the prompt.
 

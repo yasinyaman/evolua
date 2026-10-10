@@ -276,9 +276,10 @@ Descends on: OOM risk, high latency, battery/thermal, or if the larger model's f
   and backs off the rolled-back tier. A failed download is locked for the life and retried with
   exponential back-off across lives. A switched-to brain that doesn't load in a later life is
   noticed at boot (`ModelMgr:on_boot`), backed off and replaced by the previous choice.
-- **Use what's already there:** before downloading, the ladder proposes `model_adopt` — a
-  stronger brain already on the machine (a GGUF another tool fetched, a running local LLM server,
-  macOS's on-device model). See README "Decision brain".
+- **Use what's already there:** the default brain (embedded / downloaded) never changes, but a
+  bigger usable brain already on the machine (a GGUF another tool fetched, a running local LLM
+  server, macOS's on-device model) is used instead — on probation, and stepped down if too slow.
+  Before downloading, the ladder proposes `model_adopt`. See README "Decision brain".
 - **Audit log:** every model change (tier, reason, confidence) is logged.
 
 ### GPU: "GPU if present, else CPU" — three scenarios by backend
