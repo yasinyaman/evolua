@@ -47,7 +47,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["acquire", "llm", "llm acquire"]
+        features: ["acquire", "llm", "service", "llm service acquire"]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -60,6 +60,24 @@ jobs:
         run: cargo clippy --locked --all-targets --features "${{ matrix.features }}" -- -D warnings
       - name: Tests
         run: cargo test --locked --features "${{ matrix.features }}"
+
+  # the Swift bridge to macOS's on-device model must keep building; its live
+  # test skips itself where the model isn't available (CI runners)
+  apple:
+    name: features (apple, macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: apple
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --features "apple service" -- -D warnings
+      - name: Tests
+        run: cargo test --locked --features "apple service"
 
   # the Linux release binary is musl-static; prove it still links that way and runs
   static:

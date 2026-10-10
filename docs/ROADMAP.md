@@ -274,8 +274,11 @@ Descends on: OOM risk, high latency, battery/thermal, or if the larger model's f
   `model_min_samples` decisions, a higher rule-fallback rate than before the upgrade proposes
   `model_rollback` (safe-listed; also accepted from the approval inbox), which restores `.prev`
   and backs off the rolled-back tier. A failed download is locked for the life and retried with
-  exponential back-off across lives. Not yet handled: a downloaded model that fails to *load* —
-  the reasoner then runs on rules alone and nothing proposes the rollback.
+  exponential back-off across lives. A switched-to brain that doesn't load in a later life is
+  noticed at boot (`ModelMgr:on_boot`), backed off and replaced by the previous choice.
+- **Use what's already there:** before downloading, the ladder proposes `model_adopt` — a
+  stronger brain already on the machine (a GGUF another tool fetched, a running local LLM server,
+  macOS's on-device model). See README "Decision brain".
 - **Audit log:** every model change (tier, reason, confidence) is logged.
 
 ### GPU: "GPU if present, else CPU" — three scenarios by backend

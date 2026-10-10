@@ -32,6 +32,9 @@ scripts/fetch_model.sh                                  # models/smol.gguf for e
 cargo build --release --features embed_smol             # + embedded decision brain
 cargo build --release --features 'embed_smol acquire'   # + runtime model upgrade
 cargo build --release --features 'embed_smol gpu-metal' # macOS GPU backend
+cargo build --release --features llm                    # think with a GGUF already on this machine
+cargo build --release --features service                # …or a running Ollama / LM Studio / llama-server
+cargo build --release --features apple                  # …or macOS's on-device model (macOS 26+)
 
 ./target/release/evolua --ticks 60 --tick-seconds 0.2        # bounded fast demo
 ./target/release/evolua --goal "watch and report errors"     # directed mode
@@ -64,7 +67,7 @@ lua lua/main.lua --goal "log filesystem changes"
 | Phase | Capability |
 |---|---|
 | **1 · Sharp perception** | per-process CPU/RAM (`proc_top`), OS crash/error logs (`proc_errors`), an entity-based **world model**, rule-based situational reports |
-| **2 · Decision brain** | embedded tiny model (SmolLM2-135M) **interprets** a whole-system snapshot; learns from its own experience via a fitness-weighted **BM25 RAG**; falls back to rules when no model resolves |
+| **2 · Decision brain** | a small model **interprets** a whole-system snapshot — one **already on the machine** (Ollama / LM Studio / HF-cache GGUFs, a running local LLM server, macOS's on-device model) or the embedded SmolLM2-135M; learns from its own experience via a fitness-weighted **BM25 RAG**; falls back to rules when there is no brain |
 | **3 · Autonomy + curiosity** | the **L0–L4 ladder** (learn → report → notify → suggest → act), a file-based **approval inbox**, safe-list + reversibility + audit log, `curiosity`-driven active exploration |
 | **4 · Meta-evolution** | probes the host (`hostcaps`) and climbs a **model ladder** when the brain is a bottleneck and there's spare capacity; download + checksum (opt-in `acquire`); a failed fetch backs off instead of retrying every check; **rollback** restores the previous model when the new one falls back to rules more often |
 | **5 · Colony, supervisor, purpose, exploration** | **self-replication** into a colony of communicating processes; an intelligent **when-to-split** decision (load + capacity); a host-side **supervisor** ("brainstem"); **goal acquisition** — offspring born specialized to a crystallized purpose, with the colony learning which purposes pay; and **environment exploration** — the organism scouts the host and grows its own senses |
@@ -211,9 +214,9 @@ blueprint layer.
 `src/main.rs` is a thin shell: it embeds the entire `lua/` tree via `rust-embed`, registers
 each module into `package.preload` (so `require("core.kernel")` resolves from memory — no
 files on disk), resolves a writable data home, spawns the supervisor thread, and injects the
-globals `EVOLUA_HOME`, `arg`, and — when feature-gated — `llm_complete` and `model_acquire`.
-If the LLM feature is off or no model resolves, those globals are simply absent and the Lua
-side detects that and uses rules.
+globals `EVOLUA_HOME`, `arg`, the filesystem and model-discovery helpers, the brain loader
+(`host_brain_*`), and — when feature-gated — `model_acquire`. Which brain to load is decided in
+Lua (`core/brain.lua`); with no brain the reasoner uses rules.
 
 ### The tick loop (`lua/core/kernel.lua`)
 
@@ -230,7 +233,11 @@ table (`bus`, `memory`, `registry`, `evolver`, `worldmodel`, `reasoner`, `autono
 | `src/main.rs` | single-binary host: embeds `lua/`, resolves data home, injects globals, spawns supervisor |
 | `src/supervisor.rs` | host-side autonomic watch (the "brainstem"): liveness + vitals, never enforces |
 | `src/host.rs` | native filesystem helpers (list / walk / mkdir / cwd) so perception never builds shell commands from paths |
-| `src/llm.rs` | embedded decision brain (llama-cpp-2 CPU) — `llm`/`embed_smol` feature |
+| `src/discover.rs` | finds brains already on the machine: Ollama / LM Studio / Jan / GPT4All / HF / llama.cpp GGUFs, read from their headers |
+| `src/brain.rs` | loads and swaps the decision brain on request (`host_brain_*`) |
+| `src/service.rs` | a running local LLM server as the brain — `service` feature |
+| `src/apple.rs` · `src/apple/bridge.swift` | macOS's on-device model as the brain (Swift bridge built by `build.rs`) — `apple` feature |
+| `src/llm.rs` | in-process GGUF brain (llama-cpp-2 CPU, the model's own chat template) — `llm`/`embed_smol` feature |
 | `src/acquire.rs` | GGUF download + SHA-256 + atomic swap, keeping the old file as `.prev` for rollback — `acquire` feature |
 | `lua/core/kernel.lua` | life cycle / tick loop; reward/error feedback → fitness |
 | `lua/core/bus.lua` | event bus (pub/sub) — the nervous system; per-event stats |
@@ -242,6 +249,7 @@ table (`bus`, `memory`, `registry`, `evolver`, `worldmodel`, `reasoner`, `autono
 | `lua/core/evo_util.lua` | shared evolutionary operators (Box–Muller gauss + self-adaptive ES step) |
 | `lua/core/worldmodel.lua` | entity (per-process) dossiers: CPU/errors/temperature/trend/salience |
 | `lua/core/reasoner.lua` | sense-making: snapshot → decision schema (LLM+RAG, rule fallback) |
+| `lua/core/brain.lua` | which brain to think with: boot selection, candidates on this machine, switching |
 | `lua/core/rag.lua` | fitness-weighted BM25 experience bank |
 | `lua/core/autonomy.lua` | the L0–L4 ladder + approval inbox + safe-list + audit log; **evolved-organ action requests + outcome-credit** |
 | `lua/core/hostcaps.lua` | host probe (RAM/cores/power/disk) |
@@ -266,6 +274,32 @@ Directed-mode matching is bilingual: "hata"/"error" → `error_reporter`, "dosya
 
 ---
 
+## Decision brain — what it thinks with
+
+The reasoner needs a small model only to fill a short decision schema. Rather than download
+one, EvoLua first looks for a brain **already on the machine**:
+
+| Kind | Where it comes from | Build feature |
+|---|---|---|
+| `gguf` | a GGUF another tool already downloaded — Ollama's models (plain GGUF blobs), LM Studio, Jan, GPT4All, the Hugging Face and llama.cpp caches, `$EVOLUA_MODEL_DIRS` / `model_dirs` | `llm` |
+| `service` | a running Ollama, LM Studio, llama-server or other OpenAI-compatible server on localhost (or `$EVOLUA_SERVICE_URLS`) — never started by EvoLua | `service` |
+| `apple` | macOS's on-device Foundation model (macOS 26+, Apple Intelligence on; managed by the OS, no RAM in our process) | `apple` |
+| `embedded` | SmolLM2-135M baked into the binary (`scripts/fetch_model.sh`) | `embed_smol` |
+
+At boot (`--brain auto`, the default) `core/brain.lua` takes the first that loads:
+`$EVOLUA_MODEL` → the model manager's saved choice → a downloaded `models/decision.gguf` → the
+**strongest brain on the machine that fits** (`model_max_mb`, default 2000 MB, and
+`model_ram_share` of physical RAM), trying kinds in `brain_order` (default apple → service →
+gguf) → the embedded model → rules. `--brain <kind>` (or `EVOLUA_BRAIN`) restricts the choice,
+`--brain rules` turns models off. Discovered models show up in reports as `discovered model: …`
+even in a build that can't load them, and every report names the active brain.
+
+Later, when the brain falls back to rules too often, the model manager first proposes
+**`model_adopt`** — switching to the next stronger brain on the machine, with no download —
+and only then the download ladder. Every switch takes effect immediately, is judged on fresh
+samples, and is rolled back if the new brain does worse; a switched-to brain that doesn't load
+in a later life is dropped.
+
 ## Data home layout (`$EVOLUA_HOME`)
 
 ```
@@ -275,7 +309,7 @@ state/      memory.lua (cross-life memory) · evolua.log · audit.log
             evolution.log (per-generation metrics) · repertoire.txt (MAP-Elites QD map)
             heartbeat · vitals · supervisor.log   (Phase 5: host watch)
 approvals/  pending-*.md → (you) approved/ → done/
-models/     downloaded models + current_tier (Phase 4)
+models/     downloaded models + current_tier (Phase 4) · brain.lua (the brain the model manager chose)
 colony/     peers/<id> beacons · inbox/<id>/ mailboxes · clone.lock · genepool/ (HGT)
             children/<id>/ (clone sub-homes; inherited.lua = vertical gene transfer)
             lineage.log (purpose ledger) · outcomes/<id> (S4 purpose payoff)
@@ -299,6 +333,7 @@ mode the home otherwise defaults next to the script.
 --goal "<text>"            directive for directed mode (implies --mode directed)
 --ticks <n>                run for n ticks then rest (default: forever)
 --tick-seconds <s>         seconds per tick (0.2 for a fast demo)
+--brain <kind>             decision brain: auto|rules|gguf|embedded|service|apple (default: auto)
 --autonomy <lvl>           autonomy ceiling: learn|report|notify|suggest|act (default: report)
 --unattended               act on its own + download a better model without approval
                            (= EVOLUA_UNATTENDED=1; off by default)

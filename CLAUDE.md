@@ -41,6 +41,7 @@ cargo build --release                                   # Phase 1 + rule-based (
 cargo build --release --features embed_smol             # + embedded decision brain (Phase 2/3)
 cargo build --release --features 'embed_smol acquire'   # + runtime model upgrade (Phase 4)
 cargo build --release --features 'embed_smol gpu-metal' # macOS GPU backend
+cargo build --release --features 'llm service apple'    # think with a brain already on this machine
 
 ./target/release/evolua --ticks 60 --tick-seconds 0.2   # bounded fast demo
 ./target/release/evolua --goal "report errors"          # directed mode (also accepts Turkish)
@@ -52,21 +53,32 @@ cargo build --release --features 'embed_smol gpu-metal' # macOS GPU backend
 at compile time. That file is **not in the repo** — run `scripts/fetch_model.sh` first (downloads
 the pinned SmolLM2-135M-Instruct Q8_0 and checks its sha256), or the build fails. Plain
 `cargo build --release` has no such dependency. `scripts/verify_model_pin.sh` checks every
-pinned model (this one and the ladder's) against Hugging Face without downloading. At runtime the model resolves as:
-`$EVOLUA_MODEL` → `<home>/models/decision.gguf` → embedded. If none resolve, the reasoner
-gracefully falls back to rules.
+pinned model (this one and the ladder's) against Hugging Face without downloading.
+
+**Which brain runs** is Lua policy (`core/brain.lua`, at boot): `$EVOLUA_MODEL` → the model
+manager's saved choice (`<home>/models/brain.lua`) → `<home>/models/decision.gguf` → the
+strongest brain **already on the machine** that fits `model_max_mb` / `model_ram_share`, kinds
+tried in `brain_order` (apple → service → gguf) → embedded → rules. Candidates come from
+`src/discover.rs` (GGUFs of Ollama, LM Studio, Jan, GPT4All, the HF / llama.cpp caches — read from
+their headers, nothing loaded), `src/service.rs` (running local servers) and `src/apple.rs` (the
+macOS on-device model). `src/brain.rs` only loads what Lua asks for (`host_brain_load`) and
+routes `llm_complete` to it; a failed load keeps the current brain. `--brain <kind>` /
+`EVOLUA_BRAIN` restrict the choice. Keep that split: policy in Lua, mechanisms in Rust.
 
 **LLM decision quality:** the embedded SmolLM2-135M is marginal — it often can't emit the
 reasoner's strict schema and falls back to rules (watch `llm_ok` vs `llm_fallback` in
 `state/memory.lua`). A 0.5B-class model (e.g. Qwen2.5-0.5B-Instruct GGUF) produces usable
-`source="llm+rule"` decisions; point `$EVOLUA_MODEL` at it to override the embedded brain. The
+`source="llm+rule"` decisions, and anything already on the machine (Ollama's qwen2.5-coder:1.5b,
+the Apple on-device model) is picked over the embedded brain automatically. The
 reasoner prompt (`reasoner.lua` `SCHEMA`) carries a worked example — without it even Qwen echoes
 the option menus instead of choosing, so keep the example if you touch the prompt.
 
 Cargo features map directly to the four phases: `default` (none) = perception + world model +
-rule reasoning + evolution; `llm` = decision-brain infra; `embed_smol` = bakes in SmolLM2-135M
-(implies `llm`); `acquire` = download/checksum a bigger model; `gpu-{metal,cuda,vulkan}` = GPU
-backend (build-time, one per binary). Phase 5 (colony / supervisor / explorer / goal acquisition)
+rule reasoning + evolution; `llm` = in-process GGUF brain (incl. models found on disk);
+`embed_smol` = bakes in SmolLM2-135M (implies `llm`); `service` = a running local LLM server as
+the brain; `apple` = macOS's on-device model (Swift bridge built by `build.rs`, weak-linked);
+`acquire` = download/checksum a bigger model; `gpu-{metal,cuda,vulkan}` = GPU backend
+(build-time, one per binary). Phase 5 (colony / supervisor / explorer / goal acquisition)
 is **not** feature-gated — it's pure Lua plus the always-compiled host supervisor.
 
 ### Run without building (plain Lua)
@@ -104,10 +116,11 @@ never-lived state (use `EVOLUA_HOME=/path ./clean.sh` for a custom home).
 each module into `package.preload` (so the organism's `require("core.kernel")` resolves from
 memory — no files on disk), resolves a writable data home, and injects globals
 `EVOLUA_HOME`, `arg`, the always-on filesystem helpers `host_list_dir` / `host_walk` /
-`host_mkdir` / `host_cwd` (`src/host.rs`), and — when feature-gated —
-`llm_complete(system,user,max)` (`src/llm.rs`) and `model_acquire(url,dest,sha)`
-(`src/acquire.rs`). If the LLM feature is off or no model resolves, those globals are simply
-absent and the Lua side detects that and uses rules. Only `lua/core/`, `lua/sensors/`,
+`host_mkdir` / `host_cwd` / `host_models` (`src/host.rs`), the brain loader `host_brain_kinds` /
+`_load` / `_complete` / `_info` (`src/brain.rs`; `host_services`, `host_apple_status` with their
+features), and `model_acquire(url,dest,sha)` (`src/acquire.rs`, feature-gated). The reasoner's
+`llm_complete` is set by `core/brain.lua` once a brain loads; with none, it stays absent and the
+reasoner uses rules. Only `lua/core/`, `lua/sensors/`,
 `config.lua` and `main.lua` are embedded — never the runtime dirs a plain-Lua run leaves under `lua/`.
 
 **Never splice a path or other data into a shell command.** Go through `core/platform.lua`:
@@ -226,8 +239,10 @@ philosophy) that's isolated enough not to clobber core globals, wires its subscr
   The organism chooses *when* to fetch, never *what* (the pinned url+sha bound it to a vetted file).
   A failed fetch locks that tier for the life and backs off exponentially across lives
   (`model_retry_secs`, `model_max_attempts`). An upgrade is recorded with the fallback rate it
-  replaced; if the new brain falls back more, `model_rollback` restores `<name>.prev`. A model that
-  fails to *load* is not detected yet (the reasoner silently runs on rules).
+  replaced; if the new brain falls back more, `model_rollback` restores `<name>.prev`. Before any
+  download, a bottlenecked brain first proposes `model_adopt`: the next stronger brain already
+  on the machine. Downloads and adoptions switch immediately and are judged and rolled back the
+  same way; `ModelMgr:on_boot` drops a switched-to brain that doesn't load in a later life.
   Opt-in `model_force_upgrade` / `model_ignore_battery` override the bottleneck/power guards (off
   by default). Note: macOS available-RAM is `free + inactive + speculative + purgeable` pages
   (`hostcaps.lua`) — "Pages free" alone reads near-zero and would block every upgrade.

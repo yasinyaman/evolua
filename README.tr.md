@@ -28,6 +28,9 @@ cargo build --release                                   # algı + kurallar (LLM 
 scripts/fetch_model.sh                                  # embed_smol için models/smol.gguf (sha256 doğrulamalı)
 cargo build --release --features embed_smol             # + gömülü karar beyni
 cargo build --release --features 'embed_smol acquire'   # + runtime model yükseltme
+cargo build --release --features llm                    # makinede zaten olan bir GGUF ile düşün
+cargo build --release --features service                # …ya da çalışan Ollama / LM Studio / llama-server
+cargo build --release --features apple                  # …ya da macOS'un cihaz-içi modeli (macOS 26+)
 
 ./target/release/evolua --ticks 60 --tick-seconds 0.2        # sınırlı hızlı demo
 ./target/release/evolua --goal "report errors"               # direktifli (Türkçe de kabul)
@@ -56,7 +59,7 @@ lua lua/main.lua --ticks 60 --tick-seconds 0.2
 | Faz | Yetenek |
 |---|---|
 | **1 · Keskin algı** | süreç-başına CPU/RAM (`proc_top`), OS çökme/hata logları (`proc_errors`), varlık-bazlı **dünya modeli**, kural-tabanlı durum raporları |
-| **2 · Karar beyni** | gömülü minik model (SmolLM2-135M) tüm-sistem snapshot'ını **anlamlandırır**; fitness-ağırlıklı **BM25 RAG** ile öğrenir; model yoksa kurala düşer |
+| **2 · Karar beyni** | küçük bir model tüm-sistem snapshot'ını **anlamlandırır** — **makinede zaten olan** bir model (Ollama / LM Studio / HF-önbellek GGUF'ları, çalışan yerel LLM servisi, macOS'un cihaz-içi modeli) ya da gömülü SmolLM2-135M; fitness-ağırlıklı **BM25 RAG** ile öğrenir; beyin yoksa kurala düşer |
 | **3 · Otonomi + merak** | **L0–L4 merdiveni**, dosya tabanlı **onay inbox**, güvenli-liste + geri-alınabilirlik + denetim günlüğü, `curiosity` aktif keşif |
 | **4 · Meta-evrim** | host'u ölçer (`hostcaps`), beyin darboğaz + kapasite varsa **model merdiveninde** tırmanır; indirme + checksum; başarısız indirme her kontrolde tekrarlanmaz, geri çekilir; yeni beyin kurallara daha sık düşerse **rollback** önceki modeli geri getirir |
 | **5 · Koloni, süpervizör, amaç, keşif** | **kendini çoğaltma**; akıllı **ne zaman bölünmeli** kararı; host-tarafı **süpervizör**; **amaç edinme** (koloni hangi amacın ödül getirdiğini öğrenir); ve **ortam keşfi** (kendi duyularını büyütür) |
@@ -159,7 +162,9 @@ bir organ olamazlar). Kural grameri ise `templates.lua`'da (blueprint katmanı) 
 
 `src/main.rs` ince bir kabuktur: `lua/`'yu `rust-embed` ile gömer, her modülü
 `package.preload`'a kaydeder, veri evini çözer, süpervizör thread'ini doğurur ve global'leri
-(`EVOLUA_HOME`, `arg`, ve feature açıksa `llm_complete`/`model_acquire`) enjekte eder.
+(`EVOLUA_HOME`, `arg`, dosya-sistemi ve model-keşif yardımcıları, beyin yükleyicisi `host_brain_*`,
+feature açıksa `model_acquire`) enjekte eder. Hangi beynin yükleneceğine Lua karar verir
+(`core/brain.lua`); beyin yoksa reasoner kurallarla çalışır.
 
 ### Dosyalar
 
@@ -168,7 +173,11 @@ bir organ olamazlar). Kural grameri ise `templates.lua`'da (blueprint katmanı) 
 | `src/main.rs` | tek-binary host: `lua/` kaynağını gömer, veri evini çözer, global'leri enjekte eder, süpervizörü doğurur |
 | `src/supervisor.rs` | host-tarafı otonom gözcü ("beyin sapı"): canlılık + vitals, asla zorlamaz |
 | `src/host.rs` | yerel dosya-sistemi yardımcıları (listele / dolaş / mkdir / cwd); algı yolları shell komutuna girmez |
-| `src/llm.rs` | gömülü karar beyni (llama-cpp-2 CPU) — `llm`/`embed_smol` feature |
+| `src/discover.rs` | makinede zaten olan beyinleri bulur: Ollama / LM Studio / Jan / GPT4All / HF / llama.cpp GGUF'ları, başlıklarından okunur |
+| `src/brain.rs` | karar beynini istek üzerine yükler ve değiştirir (`host_brain_*`) |
+| `src/service.rs` | çalışan yerel bir LLM sunucusunu beyin olarak kullanır — `service` feature |
+| `src/apple.rs` · `src/apple/bridge.swift` | macOS'un cihaz-içi modelini beyin olarak kullanır (Swift köprüsünü `build.rs` derler) — `apple` feature |
+| `src/llm.rs` | süreç-içi GGUF beyni (llama-cpp-2 CPU, modelin kendi sohbet şablonu) — `llm`/`embed_smol` feature |
 | `src/acquire.rs` | GGUF indirme + SHA-256 + atomik takas; eski dosyayı rollback için `.prev` olarak saklar — `acquire` feature |
 | `lua/core/kernel.lua` | yaşam döngüsü / tick loop; ödül-ceza → fitness |
 | `lua/core/bus.lua` | event bus (pub/sub) — sinir sistemi; olay-başına istatistik |
@@ -180,6 +189,7 @@ bir organ olamazlar). Kural grameri ise `templates.lua`'da (blueprint katmanı) 
 | `lua/core/evo_util.lua` | paylaşılan evrim operatörleri (Box–Muller gauss + öz-uyarlanan ES adımı) |
 | `lua/core/worldmodel.lua` | varlık (süreç-başına) dosyaları: CPU/hata/sıcaklık/eğilim/salience |
 | `lua/core/reasoner.lua` | anlamlandırma: snapshot → karar şeması (LLM+RAG, kural yedeği) |
+| `lua/core/brain.lua` | hangi beyinle düşünüleceği: açılışta seçim, bu makinedeki adaylar, geçiş |
 | `lua/core/rag.lua` | fitness-ağırlıklı BM25 deneyim bankası |
 | `lua/core/autonomy.lua` | L0–L4 merdiveni + onay kutusu + güvenli-liste + denetim logu; **evrilen organ aksiyon istekleri + sonuç-kredisi** |
 | `lua/core/hostcaps.lua` | host ölçümü (RAM/çekirdek/güç/disk) |
@@ -201,6 +211,31 @@ bir organ olamazlar). Kural grameri ise `templates.lua`'da (blueprint katmanı) 
 
 ---
 
+## Karar beyni — neyle düşünür
+
+Reasoner'ın küçük bir modele tek ihtiyacı kısa bir karar şemasını doldurmak. EvoLua bir model
+indirmeden önce **makinede zaten olan** bir beyne bakar:
+
+| Tür | Nereden gelir | Build feature |
+|---|---|---|
+| `gguf` | başka bir aracın indirdiği GGUF — Ollama'nın modelleri (düz GGUF blob'ları), LM Studio, Jan, GPT4All, Hugging Face ve llama.cpp önbellekleri, `$EVOLUA_MODEL_DIRS` / `model_dirs` | `llm` |
+| `service` | localhost'ta çalışan Ollama, LM Studio, llama-server ya da başka bir OpenAI-uyumlu sunucu (veya `$EVOLUA_SERVICE_URLS`) — EvoLua asla başlatmaz | `service` |
+| `apple` | macOS'un cihaz-içi Foundation modeli (macOS 26+, Apple Intelligence açık; OS yönetir, bizim sürecimizde RAM tutmaz) | `apple` |
+| `embedded` | binary'ye gömülü SmolLM2-135M (`scripts/fetch_model.sh`) | `embed_smol` |
+
+Açılışta (`--brain auto`, varsayılan) `core/brain.lua` yüklenebilen ilkini alır: `$EVOLUA_MODEL`
+→ model yöneticisinin kaydettiği seçim → indirilmiş `models/decision.gguf` → **makinede olup
+sığan en güçlü beyin** (`model_max_mb`, varsayılan 2000 MB, ve fiziksel RAM'in `model_ram_share`
+payı), türler `brain_order` sırasıyla (varsayılan apple → service → gguf) → gömülü model →
+kurallar. `--brain <tür>` (ya da `EVOLUA_BRAIN`) seçimi daraltır, `--brain rules` modelleri
+kapatır. Bulunan modeller, onları yükleyemeyen bir build'de bile raporlarda
+`discovered model: …` olarak görünür; her rapor etkin beyni yazar.
+
+Sonra beyin kurallara fazla sık düşerse model yöneticisi önce **`model_adopt`** önerir —
+makinedeki bir sonraki daha güçlü beyne indirmesiz geçiş — ancak sonra indirme merdivenine
+başvurur. Her geçiş anında etkin olur, taze örneklerle değerlendirilir ve yeni beyin daha kötü
+çıkarsa geri alınır; sonraki bir yaşamda yüklenemeyen bir beyin bırakılır.
+
 ## Veri evi düzeni (`$EVOLUA_HOME`)
 
 ```
@@ -209,7 +244,7 @@ reports/    zaman damgalı Markdown raporlar
 state/      memory.lua · evolua.log · audit.log · heartbeat · vitals · supervisor.log
             evolution.log (jenerasyon metrikleri) · repertoire.txt (MAP-Elites QD haritası)
 approvals/  pending-*.md → (sen) approved/ → done/
-models/     indirilen modeller + current_tier
+models/     indirilen modeller + current_tier · brain.lua (model yöneticisinin seçtiği beyin)
 colony/     peers/<id> · inbox/<id>/ · clone.lock · genepool/ (yatay gen transferi)
             children/<id>/ (klon alt-evleri; inherited.lua = dikey gen transferi)
             lineage.log (amaç defteri) · outcomes/<id> (S4 ödül hasadı)
@@ -228,6 +263,7 @@ colony/     peers/<id> · inbox/<id>/ · clone.lock · genepool/ (yatay gen tran
 ```
 --goal "<text>"            direktifli mod (--mode directed ima eder)
 --ticks <n> / --tick-seconds <s>   sınırlı koşu / tick hızı
+--brain <tür>              karar beyni: auto|rules|gguf|embedded|service|apple (varsayılan: auto)
 --autonomy <lvl>           otonomi tavanı: learn|report|notify|suggest|act (varsayılan: report)
 --unattended               kendi başına davran + onaysız daha iyi model indir
                            (= EVOLUA_UNATTENDED=1; varsayılan kapalı)
