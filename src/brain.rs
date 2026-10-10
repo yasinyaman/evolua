@@ -4,12 +4,14 @@
 // later); the host only loads what it is told to and routes completions to it.
 // A failed load leaves the current brain in place. Backends:
 //   gguf / embedded — in-process llama.cpp (feature `llm`; embedded needs `embed_smol`)
+//   service         — a running Ollama / OpenAI-compatible server (feature `service`)
 //
 // Lua API:
 //   host_brain_kinds()               -> { "gguf", "embedded", … } compiled into this binary
 //   host_brain_load(spec)            -> info | nil, err   spec = {kind=…, path=…, name=…}
 //   host_brain_complete(sys, user, max?) -> text | nil
 //   host_brain_info()                -> {kind, id, name, params_b}  (kind="none" if unloaded)
+//   host_services(urls?)             -> { {url, api, models={ {name, size_mb, params_b} }} }  (`service`)
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -24,6 +26,8 @@ const N_CTX: u32 = 2048;
 enum Backend {
     #[cfg(feature = "llm")]
     Local(crate::llm::Brain),
+    #[cfg(feature = "service")]
+    Service(crate::service::Client),
 }
 
 impl Backend {
@@ -32,6 +36,8 @@ impl Backend {
         match *self {
             #[cfg(feature = "llm")]
             Backend::Local(ref b) => b.complete(system, user, max_tokens),
+            #[cfg(feature = "service")]
+            Backend::Service(ref c) => c.complete(system, user, max_tokens),
         }
     }
 }
@@ -46,7 +52,11 @@ struct Active {
 
 /// The backend kinds this binary can load.
 fn kinds() -> Vec<&'static str> {
-    [(cfg!(feature = "llm"), "gguf"), (cfg!(feature = "embed_smol"), "embedded")]
+    [
+        (cfg!(feature = "llm"), "gguf"),
+        (cfg!(feature = "embed_smol"), "embedded"),
+        (cfg!(feature = "service"), "service"),
+    ]
         .into_iter()
         .filter_map(|(on, kind)| on.then_some(kind))
         .collect()
@@ -70,6 +80,15 @@ fn load(spec: &Table, home: &Path) -> anyhow::Result<(Backend, String, String)> 
         "embedded" => {
             let b = crate::llm::Brain::load_embedded(home, N_CTX)?;
             Ok((Backend::Local(b), format!("embedded:{}", crate::llm::EMBEDDED_NAME), crate::llm::EMBEDDED_NAME.into()))
+        }
+        #[cfg(feature = "service")]
+        "service" => {
+            let field = |k: &str| spec.get::<Option<String>>(k).ok().flatten();
+            let need = |k: &str| field(k).ok_or_else(|| anyhow::anyhow!("service spec needs `{k}`"));
+            let (url, model) = (need("url")?, need("model")?);
+            let api = field("api");
+            let client = crate::service::Client::connect(&url, api.as_deref().unwrap_or("openai"), &model)?;
+            Ok((Backend::Service(client), format!("service:{url}#{model}"), model))
         }
         other => anyhow::bail!("this binary can't load a '{other}' brain (compiled kinds: {:?})", kinds()),
     }
@@ -98,6 +117,36 @@ pub fn register(lua: &Lua, home: PathBuf) -> mlua::Result<()> {
     let slot: Rc<RefCell<Option<Active>>> = Rc::new(RefCell::new(None));
 
     g.set("host_brain_kinds", lua.create_function(|_, ()| Ok(kinds()))?)?;
+
+    #[cfg(feature = "service")]
+    g.set(
+        "host_services",
+        lua.create_function(|lua, extra: Option<Table>| {
+            let mut urls = Vec::new();
+            if let Some(t) = extra {
+                for u in t.sequence_values::<String>() {
+                    urls.push(u?);
+                }
+            }
+            let out = lua.create_table()?;
+            for (i, s) in crate::service::detect(&urls).into_iter().enumerate() {
+                let t = lua.create_table()?;
+                t.set("url", s.url)?;
+                t.set("api", s.api)?;
+                let models = lua.create_table()?;
+                for (j, m) in s.models.into_iter().enumerate() {
+                    let mt = lua.create_table()?;
+                    mt.set("name", m.name)?;
+                    mt.set("size_mb", m.size.map(|b| (b as f64 / 1_048_576.0).round()))?;
+                    mt.set("params_b", m.params_b.map(|p| (p * 100.0).round() / 100.0))?;
+                    models.set(j + 1, mt)?;
+                }
+                t.set("models", models)?;
+                out.set(i + 1, t)?;
+            }
+            Ok(out)
+        })?,
+    )?;
 
     let s = slot.clone();
     g.set(

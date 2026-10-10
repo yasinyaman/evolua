@@ -56,6 +56,11 @@ embed_smol = ["llm"]
 # Faz 4 — runtime model acquisition (download + checksum). Exposes model_acquire.
 acquire = ["dep:ureq", "dep:sha2"]
 
+# Use a running local LLM server as the decision brain: Ollama, LM Studio,
+# llama-server or any OpenAI-compatible endpoint (src/service.rs). Never
+# starts a server; only uses one that is already up.
+service = ["dep:ureq"]
+
 # GPU backends (build-time; see docs/ROADMAP.md "GPU"). Each implies `llm`.
 #   - gpu-metal: macOS (present on every Mac; CPU fallback via n_gpu_layers=0)
 #   - gpu-cuda / gpu-vulkan: needs that GPU runtime present on the target machine

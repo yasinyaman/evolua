@@ -26,6 +26,8 @@ mod acquire;
 mod brain;
 mod discover;
 mod host;
+#[cfg(feature = "service")]
+mod service;
 mod supervisor;
 
 // Only the organism's SOURCE is embedded: core/, sensors/, config.lua, main.lua.

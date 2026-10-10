@@ -169,7 +169,7 @@ function Reasoner:step()
         ctx.memory:bump("llm_ok")            -- decision brain produced usable output
       else
         ctx.memory:bump("llm_fallback")      -- bottleneck signal for the model ladder
-        ctx.log:debug("reasoner: schema parse failed, using rules")
+        ctx.log:debug("reasoner: schema parse failed, using rules — reply: %q", reply:sub(1, 300))
       end
     else
       ctx.memory:bump("llm_fallback")
