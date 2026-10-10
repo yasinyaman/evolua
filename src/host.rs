@@ -71,6 +71,35 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // host_models(extra_dirs?) -> { {path, source, name, size_mb, params_b, arch,
+    //   quant, ctx}, … } — decision brains already on this machine (discover.rs).
+    // Finds and describes only; nothing is loaded.
+    g.set(
+        "host_models",
+        lua.create_function(|lua, extra: Option<Table>| {
+            let mut dirs = Vec::new();
+            if let Some(t) = extra {
+                for d in t.sequence_values::<String>() {
+                    dirs.push(PathBuf::from(d?));
+                }
+            }
+            let out = lua.create_table()?;
+            for (i, m) in crate::discover::scan(&dirs).into_iter().enumerate() {
+                let t = lua.create_table()?;
+                t.set("path", m.path.to_string_lossy().into_owned())?;
+                t.set("source", m.source)?;
+                t.set("name", m.name.clone())?;
+                t.set("size_mb", (m.size as f64 / 1_048_576.0).round())?;
+                t.set("params_b", (m.params_b() * 100.0).round() / 100.0)?;
+                t.set("arch", m.meta.arch.clone())?;
+                t.set("quant", m.quant())?;
+                t.set("ctx", m.meta.context_length)?;
+                out.set(i + 1, t)?;
+            }
+            Ok(out)
+        })?,
+    )?;
+
     // host_walk(root, {depth, limit, kind="dir"|"file", suffix, prune={names}})
     //   -> { {path=, dir=, mtime=, size=}, ... }   breadth-first, like `find -maxdepth`
     g.set(

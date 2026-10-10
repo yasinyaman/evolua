@@ -23,6 +23,7 @@ use rust_embed::RustEmbed;
 mod llm;
 #[cfg(feature = "acquire")]
 mod acquire;
+mod discover;
 mod host;
 mod supervisor;
 

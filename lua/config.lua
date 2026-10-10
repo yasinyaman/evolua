@@ -65,6 +65,8 @@ return {
   model_force_upgrade = false,   -- opt-in: always treat the brain as upgradeable (skip bottleneck test)
   model_ignore_battery= false,   -- opt-in: allow acquisition while on battery
   model_check_every   = 50,      -- reconsider the model every N ticks
+  model_dirs          = {},      -- extra dirs to look for .gguf brains in (also $EVOLUA_MODEL_DIRS);
+                                 -- Ollama, LM Studio, HF/llama.cpp caches, GPT4All, Jan are always searched
   model_retry_secs    = 3600,    -- after a failed acquisition, wait this long (doubling per failure; not within one life)
   model_max_attempts  = 3,       -- give a tier up after this many failed acquisitions
   model_headroom      = 0.7,     -- only claim this fraction of available RAM
@@ -94,6 +96,7 @@ return {
   explore_max_watch = 12,     -- cap on auto-added watch targets (bound perception growth)
   explore_net       = true,   -- include network (listening ports) discovery
   explore_tools     = true,   -- include installed-command / tool discovery ($PATH scan)
+  explore_models    = true,   -- report decision brains already on the host (GGUFs, see model_dirs)
   -- "what capabilities does this host offer?" — flagged when present during a PATH scan
   notable_tools = {
     "git", "docker", "podman", "kubectl", "python3", "python", "node", "deno", "lua",

@@ -655,8 +655,8 @@ T["explorer"] = {
       return false
     end
 
-    local MOD = { "fs", "log", "net", "cmd", "sys" }
-    local modal_i, sys_done, tools_done = 0, false, false
+    local MOD = { "fs", "log", "net", "cmd", "model", "sys" }
+    local modal_i, sys_done, tools_done, models_done = 0, false, false, false
 
     -- discoveries: report + reward (observability; the real effect is perception growth)
     ctx.bus:subscribe("env.discovery", function(ev)
@@ -676,6 +676,7 @@ T["explorer"] = {
       modal_i = (modal_i % #MOD) + 1
       local m = MOD[modal_i]
       if m == "net" and cfg.explore_net == false then m = "sys" end
+      if m == "model" and cfg.explore_models == false then m = "sys" end
       if m == "cmd" and cfg.explore_tools == false then m = "sys" end
 
       if m == "fs" then
@@ -747,6 +748,19 @@ T["explorer"] = {
           for _, t in ipairs(cfg.notable_tools or {}) do if seen[t] then have[#have + 1] = t end end
           ctx.bus:emit("env.discovery", { kind = "tool", detail = string.format(
             "%d commands on PATH; notable: %s", n, #have > 0 and table.concat(have, ",") or "none") })
+        end
+        return { handled = true, reward = 1 }
+
+      elseif m == "model" then   -- decision brains already on this host (scanned once)
+        if not models_done then
+          models_done = true
+          local found = P.models(cfg.model_dirs)
+          for i, md in ipairs(found) do
+            if i > (genes.breadth or 6) then break end
+            ctx.bus:emit("env.discovery", { kind = "model", detail = string.format("%s (%s, %.2gB %s, %d MB)",
+              md.name, md.source, md.params_b or 0, md.quant or "?", md.size_mb or 0) })
+          end
+          if #found > 0 then return { handled = true, reward = 2 } end
         end
         return { handled = true, reward = 1 }
 

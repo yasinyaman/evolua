@@ -30,6 +30,8 @@ mlua = { version = "0.10", features = ["lua54", "vendored"] }
 # Embed the lua/ source tree into the binary at compile time.
 rust-embed = "8"
 anyhow = "1"
+# Ollama manifests (model discovery) and the local-service brain speak JSON.
+serde_json = "1"
 
 # Faz 2 — embedded "decision brain" (opt-in). With `llm` off, the binary stays
 # mlua-only and the Lua reasoner falls back to rules. llama-cpp-2 default-features

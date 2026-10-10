@@ -207,6 +207,17 @@ function M.list_dir(path)
   return out
 end
 
+-- decision brains already on this machine (Ollama, LM Studio, HF / llama.cpp
+-- caches, GPT4All, Jan, $EVOLUA_MODEL_DIRS, extra_dirs): { {path, source, name,
+-- size_mb, params_b, arch, quant, ctx}, … } smallest first. Needs the binary
+-- (GGUF headers are read natively); plain Lua finds nothing.
+function M.models(extra_dirs)
+  local host = rawget(_G, "host_models")
+  if not host then return {} end
+  local ok, list = pcall(host, extra_dirs)
+  return ok and list or {}
+end
+
 -- create a directory and its parents (ok if it exists)
 function M.mkdir_p(path)
   local host = rawget(_G, "host_mkdir")
