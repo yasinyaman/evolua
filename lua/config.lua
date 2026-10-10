@@ -47,7 +47,7 @@ return {
   -- --unattended (or EVOLUA_UNATTENDED=1) sets autonomy_ceiling = "act",
   -- model_unattended = true and safe-lists model_upgrade, in one switch.
   autonomy_ceiling = "report",   -- learn | report | notify | suggest | act
-  safe_actions     = { "throttle", "notify", "model_downgrade", "model_rollback" }, -- reversible verbs allowed at L4
+  safe_actions     = { "throttle", "notify", "model_downgrade", "model_rollback", "model_adopt" }, -- reversible verbs allowed at L4
   suggest_min_conf = 0.6,        -- min confidence to file an approval suggestion
   act_min_conf     = 0.85,       -- min confidence for autonomous (L4) action
   -- evolved-organ actions (rule-DSL "act"): routed through the SAME ladder as the
@@ -59,6 +59,16 @@ return {
   outcome_min_drop       = 5,          -- min cpu_avg drop vs baseline that counts as a success
   outcome_max_reward     = 5,          -- cap on outcome credit per settled action
   curiosity        = 0.3,        -- 0 = passive · 1 = constantly explore the system
+
+  -- decision brain (core/brain.lua) — which model the reasoner thinks with.
+  -- auto: $EVOLUA_MODEL → the model manager's saved choice → models/decision.gguf
+  -- → the strongest brain already on this machine that fits (kinds tried in
+  -- brain_order: the OS's on-device model, a running local LLM service, a GGUF
+  -- another tool downloaded) → the embedded model → rules. --brain / $EVOLUA_BRAIN.
+  brain           = "auto",   -- auto | rules | gguf | embedded | service | apple
+  brain_order     = { "apple", "service", "gguf" },
+  model_max_mb    = 2000,     -- never pick a model bigger than this (MB: GGUF file / service model)
+  model_ram_share = 0.25,     -- …nor one bigger than this share of physical RAM
 
   -- model meta-evolution (Faz 4) — size the decision model to the host
   model_unattended    = false,   -- download a better brain WITHOUT approval (bounded to ladder url+sha); --unattended

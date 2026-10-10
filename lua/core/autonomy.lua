@@ -136,6 +136,12 @@ function Autonomy:_propose(d)
     fh:write(string.format("URL: %s\n", act.url or ""))
     fh:write(string.format("SHA: %s\n", act.sha or ""))
   end
+  -- model_adopt: the brain to switch to, one field per line
+  if act.verb == "model_adopt" and act.spec then
+    for _, k in ipairs({ "kind", "path", "url", "api", "model", "name", "params_b" }) do
+      if act.spec[k] ~= nil then fh:write(string.format("SPEC_%s: %s\n", k:upper(), tostring(act.spec[k]))) end
+    end
+  end
   fh:write("\n> To APPROVE, move this file into `approved/`. To REJECT, delete it.\n")
   fh:close()
   self:audit("PROPOSED " .. id .. " verb=" .. tostring(act.verb))
@@ -168,15 +174,11 @@ function Autonomy:_enact(act, how)
         act.tier_name or "?", act.approx_mb or 0, dest))
       local pok, got = pcall(acquire, act.url, dest, act.sha)
       if pok and got then
-        if mm then
-          mm:record_upgrade(mm:current_index(), act.tier, mm:fallback_rate())
-          mm:set_index(act.tier)
-        end
-        -- new brain in place (loads next life); clear the bottleneck samples so
-        -- we re-judge it fresh instead of re-downloading on the next check.
-        local c = self.ctx.memory.data.counters
-        if c then c.llm_ok = 0; c.llm_fallback = 0 end
-        self:audit(string.format("model_upgrade: ACQUIRED %s — active next life", act.tier_name or "?"))
+        -- switch to it now (fresh samples, judged and rollback-able like any switch)
+        local switched, info = false, nil
+        if mm then switched, info = mm:acquired(act, dest) end
+        self:audit(string.format("model_upgrade: ACQUIRED %s — %s", act.tier_name or "?",
+          switched and "now the decision brain" or ("will load next life (" .. tostring(info) .. ")")))
       else
         local why = pok and "download or checksum failed" or tostring(got)
         if mm and act.tier then mm:record_failure(act.tier, why) end
@@ -187,6 +189,12 @@ function Autonomy:_enact(act, how)
       if mm and act.tier then mm.locked[act.tier] = "no acquire binding/url" end
       self:audit("model_upgrade skipped: no acquire binding/url (build with --features acquire)")
     end
+  elseif act.verb == "model_adopt" then
+    -- a brain already on this machine (core/brain.lua candidate): no download
+    local ok, res = false, "no model manager"
+    if self.ctx.modelmgr and act.spec then ok, res = self.ctx.modelmgr:adopt(act.spec) end
+    self:audit(string.format("model_adopt: %s %s (%s)", ok and "switched to" or "could not switch to",
+      tostring(act.tier_name), ok and tostring(res.id) or tostring(res)))
   elseif act.verb == "model_rollback" then
     local ok, what = false, "no model manager"
     if self.ctx.modelmgr then ok, what = self.ctx.modelmgr:rollback() end
@@ -231,6 +239,12 @@ function Autonomy:poll_approvals()
             act.tier_name, act.file = field("TIER_NAME"), field("FILE")
             act.approx_mb = tonumber(field("APPROX_MB")) or 0
             act.url, act.sha = field("URL"), field("SHA")
+          end
+          if verb == "model_adopt" then
+            local spec = {}
+            for k, v in txt:gmatch("SPEC_([%u_]+):%s*([^\n\r]+)") do spec[k:lower()] = v:gsub("%s+$", "") end
+            spec.params_b = tonumber(spec.params_b)
+            if spec.kind then act.spec, act.tier_name = spec, spec.name end
           end
           self:_enact(act, "approved")
         end

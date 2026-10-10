@@ -23,6 +23,7 @@ use rust_embed::RustEmbed;
 mod llm;
 #[cfg(feature = "acquire")]
 mod acquire;
+mod brain;
 mod discover;
 mod host;
 mod supervisor;
@@ -123,27 +124,12 @@ fn run() -> mlua::Result<()> {
     // core/platform.lua uses them when present, the shell otherwise.
     host::register(&lua)?;
 
-    // 3b) decision brain (Faz 2) — resolve & expose llm_complete(system,user,max?)
-    // If no model resolves (or the feature is off), the global is absent and the
-    // Lua reasoner falls back to rule-based reasoning.
-    #[cfg(feature = "llm")]
-    {
-        if let Some(brain) = llm::Brain::resolve(&home, 2048) {
-            let f = lua.create_function(
-                move |_, (system, user, max_tokens): (String, String, Option<usize>)| {
-                    match brain.complete(&system, &user, max_tokens.unwrap_or(192)) {
-                        Ok(s) => Ok(Some(s)),
-                        Err(e) => {
-                            eprintln!("llm_complete error: {e}");
-                            Ok(None)
-                        }
-                    }
-                },
-            )?;
-            globals.set("llm_complete", f)?;
-            globals.set("EVOLUA_HAS_LLM", true)?;
-        }
-    }
+    // 3b) decision brain — host_brain_kinds / _load / _complete / _info. Nothing
+    // is loaded here: core/brain.lua picks the brain at boot (explicit model,
+    // the model manager's saved choice, a downloaded or embedded model, or one
+    // already on the machine) and points the reasoner's llm_complete at it.
+    // With no backend compiled in, the reasoner falls back to rules.
+    brain::register(&lua, home.clone())?;
 
     // 3c) model acquisition (Faz 4) — expose model_acquire(url, dest, sha256?).
     // The Lua model manager calls this only after the autonomy ladder approves

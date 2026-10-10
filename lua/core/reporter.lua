@@ -4,7 +4,8 @@
 -- SITUATIONAL summary straight from the world model ("what's going on, by app"),
 -- so reports are meaningful even when no organ logged an observation.
 
-local P = require("core.platform")
+local P     = require("core.platform")
+local Brain = require("core.brain")
 
 local Reporter = {}
 Reporter.__index = Reporter
@@ -80,8 +81,11 @@ function Reporter:write_report(reason)
   fh:write(string.format("- mode: **%s**%s · trigger: %s\n", self.ctx.cfg.mode,
     self.ctx.cfg.goal and self.ctx.cfg.goal ~= "" and (" · goal: _" .. self.ctx.cfg.goal .. "_") or "",
     reason or "?"))
-  fh:write(string.format("- tick: %d · generation: %d · organs: %d\n\n",
-    self.ctx.kernel.tick, self.ctx.memory.data.generation, #self.ctx.registry:list()))
+  local b = Brain.info()
+  fh:write(string.format("- tick: %d · generation: %d · organs: %d · brain: %s%s\n\n",
+    self.ctx.kernel.tick, self.ctx.memory.data.generation, #self.ctx.registry:list(),
+    b.kind == "none" and "rules" or (b.name .. " (" .. b.kind .. ")"),
+    b.params_b and string.format(", %.2gB", b.params_b) or ""))
 
   self:_situational(fh)
 

@@ -13,6 +13,8 @@ local Reasoner   = require("core.reasoner")
 local Autonomy   = require("core.autonomy")
 local ModelMgr   = require("core.modelmgr")
 local Platform   = require("core.platform")
+local Brain      = require("core.brain")
+local HostCaps   = require("core.hostcaps")
 
 local Kernel = {}
 Kernel.__index = Kernel
@@ -65,6 +67,12 @@ function Kernel:boot()
   local ctx = self.ctx
   ctx.log:info("\27[1mEvoLua\27[0m booting — mode=%s%s", self.cfg.mode,
     (self.cfg.goal and self.cfg.goal ~= "") and (" goal=\"" .. self.cfg.goal .. "\"") or "")
+
+  -- this life's decision brain (core/brain.lua); the model manager then notes a
+  -- brain switch (fresh samples) or a switched-to brain that didn't come back
+  ctx.brain = Brain.select(self.cfg, ctx.modelmgr.models_dir, ctx.log,
+    HostCaps.probe(ctx.modelmgr.models_dir).ram_total_mb)
+  ctx.modelmgr:on_boot(ctx.brain)
 
   -- load built-in sensors
   for _, name in ipairs(BUILTIN_SENSORS) do

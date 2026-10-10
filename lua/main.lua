@@ -66,6 +66,7 @@ local function unattended()
   table.insert(cfg.safe_actions, "model_upgrade")
 end
 if os.getenv("EVOLUA_UNATTENDED") == "1" then unattended() end
+if (os.getenv("EVOLUA_BRAIN") or "") ~= "" then cfg.brain = os.getenv("EVOLUA_BRAIN") end
 
 -- ---- minimal flag parser -------------------------------------------------
 -- A bad command line stops the organism before it lives (exit 2): `--ticks abc`
@@ -114,6 +115,7 @@ local function parse(args)
     elseif a == "--log-level" then cfg.log_level = word("debug", "info", "warn", "error")
     elseif a == "--autonomy" then cfg.autonomy_ceiling = word("learn", "report", "notify", "suggest", "act")
     elseif a == "--unattended" then unattended()
+    elseif a == "--brain" then cfg.brain = word("auto", "rules", "gguf", "embedded", "service", "apple")
     -- colony / self-replication
     elseif a == "--clone" then cfg.clone_enabled = true
     elseif a == "--no-clone" then cfg.clone_enabled = false
@@ -147,6 +149,9 @@ EvoLua — a self-evolving Lua organism
   --log-level <lvl>          debug|info|warn|error
   --autonomy <lvl>           autonomy ceiling: learn|report|notify|suggest|act (default: report;
                              suggest = proposed actions + model upgrades go to approvals/)
+  --brain <kind>             decision brain: auto|rules|gguf|embedded|service|apple (default: auto
+                             = an explicit/saved/downloaded model, else the strongest one already
+                             on this machine, else the embedded one; = EVOLUA_BRAIN)
   --unattended               act on its own (reversible, safe-listed verbs only) and download a
                              better decision model WITHOUT approval (= EVOLUA_UNATTENDED=1)
 

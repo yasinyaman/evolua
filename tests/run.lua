@@ -35,7 +35,7 @@ end
 -- test files, in a stable order (no directory listing needed)
 local FILES = {
   "test_serialize", "test_memory", "test_bus", "test_rule_dsl", "test_modelmgr",
-  "test_reasoner", "test_rag", "test_goals", "test_platform", "test_log",
+  "test_reasoner", "test_rag", "test_goals", "test_platform", "test_log", "test_brain",
 }
 
 local only = {}
