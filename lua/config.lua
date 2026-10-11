@@ -41,12 +41,13 @@ return {
   reasoner_grow_conf      = 0.5, -- min confidence to grow a routed organ
   rag_k                   = 3,   -- experience-bank exemplars injected into the prompt
 
-  -- autonomy ladder (Faz 3) — how far the organism may act on its own
-  -- NOTE: set to UNATTENDED ("act" + model_upgrade safe-listed) so the organism
-  -- acquires its own decision model without approval. Revert ceiling to "report"
-  -- and drop model_upgrade / model_unattended for the safe, approval-gated default.
-  autonomy_ceiling = "act",      -- learn | report | notify | suggest | act
-  safe_actions     = { "throttle", "notify", "model_downgrade", "model_upgrade" }, -- reversible verbs allowed at L4
+  -- autonomy ladder (Faz 3) — how far the organism may act on its own.
+  -- SAFE by default: it only reports. --autonomy suggest routes proposed actions
+  -- (and model upgrades) to the approval inbox. Unattended operation is opt-in:
+  -- --unattended (or EVOLUA_UNATTENDED=1) sets autonomy_ceiling = "act",
+  -- model_unattended = true and safe-lists model_upgrade, in one switch.
+  autonomy_ceiling = "report",   -- learn | report | notify | suggest | act
+  safe_actions     = { "throttle", "notify", "model_downgrade", "model_rollback", "model_adopt" }, -- reversible verbs allowed at L4
   suggest_min_conf = 0.6,        -- min confidence to file an approval suggestion
   act_min_conf     = 0.85,       -- min confidence for autonomous (L4) action
   -- evolved-organ actions (rule-DSL "act"): routed through the SAME ladder as the
@@ -59,37 +60,61 @@ return {
   outcome_max_reward     = 5,          -- cap on outcome credit per settled action
   curiosity        = 0.3,        -- 0 = passive · 1 = constantly explore the system
 
-  -- model meta-evolution (Faz 4) — the binary ships NO model; the organism FINDS
-  -- one on the host or FETCHES one sized to the host (core/modelmgr.lua).
-  model_discover      = true,    -- scan Ollama / LM Studio / HF cache / own dirs for a usable GGUF and attach it
-  model_dirs          = {},      -- extra directories to scan for *.gguf (own models dir + cwd/models are implicit)
-  model_path          = nil,     -- explicit GGUF to use (--model <path>); wins over discovery and the ladder
-  model_max_mb        = nil,     -- cap on model size (MB) for both discovery and downloads (nil = sized by RAM only)
-  model_unattended    = true,    -- download a better brain WITHOUT approval (bounded to ladder url+sha)
-  model_force_upgrade = false,   -- opt-in: always treat the brain as upgradeable (skip bottleneck test)
-  model_ignore_battery= false,   -- opt-in: allow acquisition while on battery
-  model_check_every   = 50,      -- reconsider the model every N ticks
-  model_headroom      = 0.7,     -- only claim this fraction of AVAILABLE RAM ...
-  -- ONLINE brain (optional): use a hosted LLM instead of / before a local GGUF. A small
-  -- host then needs no RAM for a model at all. Provider or raw OpenAI-compatible URL:
-  --   "openai" | "anthropic" | "openrouter" | "groq" | "ollama" | "https://host/v1"
-  -- The API key is read from the env var named by llm_key_env (never stored here);
-  -- per-provider defaults: OPENAI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY /
-  -- GROQ_API_KEY / EVOLUA_LLM_KEY. CLI: --llm-api --llm-model --llm-key-env.
-  -- "auto" (default) = use the first provider whose key is in the environment, FREE
-  -- tiers first: ollama (local server) → groq → cerebras → gemini → openrouter (free
-  -- model) → mistral → github → huggingface → openai → anthropic. No key → no online
-  -- brain → local discovery as before. nil/false disables online brains entirely.
+  -- decision brain (core/brain.lua) — which model the reasoner thinks with.
+  -- The organism's own DEFAULT never changes: models/decision.gguf if it downloaded
+  -- one, else the model built into the binary. If this machine has a BIGGER brain
+  -- it can use (a GGUF another tool fetched, a running local LLM server, the OS's
+  -- on-device model), the biggest such is used instead; the default stays the
+  -- fallback. $EVOLUA_MODEL always wins. --brain / $EVOLUA_BRAIN restrict the kind.
+  brain             = "auto",   -- auto | rules | gguf | embedded | service | apple
+  model_ram_share   = 0.25,     -- "fits": a model may take at most this share of physical RAM
+  model_max_mb      = nil,      -- optional hard cap on model size (MB), e.g. 2000
+  brain_max_seconds = 10,       -- "fast enough": slower on average than this → step down to a smaller one
+  model_discover    = true,     -- false = never use a brain found on this machine (GGUF / local server / OS model)
+  model_path        = nil,      -- explicit GGUF to use (--model <path>); like $EVOLUA_MODEL, wins over everything
+
+  -- ONLINE brain (optional): a hosted LLM before any local model. A small host then needs
+  -- no RAM for a model at all. "auto" (default) = the first provider whose key is in the
+  -- environment or in <home>/keys/<provider>, FREE tiers first (llm_providers order); a
+  -- machine brain comes next, then the keyless public endpoint, then the default/rules.
+  -- Or a provider id, or an OpenAI-compatible base URL ("anthropic+URL" for proxies).
+  -- false disables online brains entirely. CLI: --llm-api --llm-model --llm-key-env.
   llm_api             = "auto",
   llm_api_model       = nil,     -- nil = provider default (free-tier model where one exists)
   llm_key_env         = nil,     -- nil = provider default env var
-  llm_keyless         = true,    -- in auto mode, fall back to the keyless public endpoint when no key exists
+  llm_keyless         = true,    -- in auto mode, fall back to the keyless public endpoint when nothing else fits
   llm_key_request     = true,    -- no key anywhere → write approvals/api-key-wanted.md (how to get a free one) and
                                  -- watch <home>/keys/<provider> so a dropped key goes live without a restart
   llm_remote_budget   = 300,     -- max online calls per life (wallet guard); nil = unlimited
-  llm_remote_only     = true,    -- with an online brain, don't discover/download local models
-  model_ram_floor_frac= 0.5,     -- ... but never budget less than this fraction of TOTAL RAM (mmap'd
-                                 -- weights are evictable; momentary "available" undercounts badly on macOS)
+  llm_remote_only     = true,    -- with an online brain up, keep no local model loaded (free its RAM)
+  -- providers in AUTO order: free tiers with a key, then the keyless endpoint, then paid.
+  -- Model names are defaults the operator can override (--llm-model): providers rename
+  -- their free models now and then. A local Ollama / LM Studio server is NOT listed here —
+  -- it is a machine brain (core/brain.lua candidates, feature `service`).
+  llm_providers = {
+    { id = "groq",        kind = "openai",    base = "https://api.groq.com/openai/v1",                 model = "llama-3.3-70b-versatile",                 key = "GROQ_API_KEY",       free = true },
+    { id = "cerebras",    kind = "openai",    base = "https://api.cerebras.ai/v1",                     model = "llama3.1-8b",                             key = "CEREBRAS_API_KEY",   free = true },
+    { id = "gemini",      kind = "openai",    base = "https://generativelanguage.googleapis.com/v1beta/openai", model = "gemini-2.0-flash",            key = "GEMINI_API_KEY",     free = true },
+    { id = "openrouter",  kind = "openai",    base = "https://openrouter.ai/api/v1",                   model = "meta-llama/llama-3.3-70b-instruct:free", key = "OPENROUTER_API_KEY", free = true },
+    { id = "mistral",     kind = "openai",    base = "https://api.mistral.ai/v1",                      model = "mistral-small-latest",                    key = "MISTRAL_API_KEY",    free = true },
+    { id = "github",      kind = "openai",    base = "https://models.github.ai/inference",             model = "openai/gpt-4o-mini",                      key = "GITHUB_TOKEN",       free = true },
+    { id = "huggingface", kind = "openai",    base = "https://router.huggingface.co/v1",               model = "Qwen/Qwen2.5-Coder-32B-Instruct",         key = "HF_TOKEN",           free = true },
+    -- keyless public endpoint (rate-limited, best effort; answers 402 to big prompts)
+    { id = "pollinations", kind = "openai",   base = "https://text.pollinations.ai/openai",            model = "openai",                                  key = nil,                  free = true, keyless = true },
+    { id = "openai",      kind = "openai",    base = "https://api.openai.com/v1",                      model = "gpt-4o-mini",                             key = "OPENAI_API_KEY" },
+    { id = "anthropic",   kind = "anthropic", base = "https://api.anthropic.com/v1",                   model = "claude-haiku-5-5",                        key = "ANTHROPIC_API_KEY" },
+  },
+
+  -- model meta-evolution (Faz 4) — size the decision model to the host
+  model_unattended    = false,   -- download a better brain WITHOUT approval (bounded to ladder url+sha); --unattended
+  model_force_upgrade = false,   -- opt-in: always treat the brain as upgradeable (skip bottleneck test)
+  model_ignore_battery= false,   -- opt-in: allow acquisition while on battery
+  model_check_every   = 50,      -- reconsider the model every N ticks
+  model_dirs          = {},      -- extra dirs to look for .gguf brains in (also $EVOLUA_MODEL_DIRS);
+                                 -- Ollama, LM Studio, HF/llama.cpp caches, GPT4All, Jan are always searched
+  model_retry_secs    = 3600,    -- after a failed acquisition, wait this long (doubling per failure; not within one life)
+  model_max_attempts  = 3,       -- give a tier up after this many failed acquisitions
+  model_headroom      = 0.7,     -- only claim this fraction of available RAM
   model_min_samples   = 10,      -- reasoner samples before judging a bottleneck
   model_fallback_rate = 0.4,     -- rule-fallback rate above which the model is "too weak"
 
@@ -116,23 +141,15 @@ return {
   -- no model needed); the seeded "synth" organ is the ceiling. When a directed
   -- goal has no blueprint, or a stimulus starves with no blueprint answering it,
   -- synth asks the brain (llm_complete) to WRITE a whole new organ file, checks it
-  -- compiles + passes a lint, loads it as plugins/syn_*.lua, and then keeps it
-  -- under the same honest-fitness selection: an organ that earns nothing is
-  -- retired and re-synthesized with that failure as feedback; one that errors is
-  -- repaired (the error goes back to the model). No brain → synth idles.
+  -- compiles + passes a lint + a dry run, loads it as plugins/syn_*.lua, and then
+  -- keeps it under the same honest-fitness selection: an organ that earns nothing
+  -- is retired and re-synthesized with that failure as feedback; one that errors
+  -- is repaired (the error goes back to the model). No brain → synth idles.
   synth             = true,   -- seed the synthesizer organ
   synth_every       = 40,     -- ticks between synthesis attempts (each blocks the loop for one LLM call)
   synth_max         = 6,      -- max LLM synthesis calls per life (budget)
-  report_stale_sim    = 0.7,     -- a report this similar (shape, digits ignored) to the organ's previous one is noise…
-  report_stale_ticks  = 15,      -- …but only when it follows the previous one within this many ticks (rapid-fire)
-  report_stale_penalty= 0.5,
-  report_noise_ratio  = 4,       -- a model-written organ is "doing its job" while stale ≤ ratio × valued reports:
-                                 -- a wave detector reports a few times per wave (bounded), a garbage reporter forever
-  report_reward       = 4.0,     -- a report that follows a quiet spell (≥ report_stale_ticks) earns this — a real
-                                 -- finding must outweigh several generations of idle decay (rare-event detectors
-                                 -- report once a minute and were being culled between findings)     -- …and costs this much fitness × similarity (selection kills "same line every cycle")
-  synth_goal_always = true,    -- model attempts the goal even when a template keyword matched (templates = floor)
-  synth_tokens      = 1800,    -- max tokens the model may spend on one organ
+  synth_goal_always = true,   -- model attempts the goal even when a template keyword matched (templates = floor)
+  synth_tokens      = 1800,   -- max tokens the model may spend on one organ
   synth_grace       = 120,    -- ticks a synthesized organ gets before selection may retire it (it must live
                               -- long enough to SEE a change: at 0.5 s/tick this is only a minute)
   synth_repairs     = 2,      -- repair attempts per synthesized organ before it is scrapped
@@ -140,6 +157,7 @@ return {
   explore_max_watch = 12,     -- cap on auto-added watch targets (bound perception growth)
   explore_net       = true,   -- include network (listening ports) discovery
   explore_tools     = true,   -- include installed-command / tool discovery ($PATH scan)
+  explore_models    = true,   -- report decision brains already on the host (GGUFs, see model_dirs)
   -- "what capabilities does this host offer?" — flagged when present during a PATH scan
   notable_tools = {
     "git", "docker", "podman", "kubectl", "python3", "python", "node", "deno", "lua",
@@ -180,6 +198,13 @@ return {
     ["metric.load"]= "system load",
     ["proc.hot"]   = "cpu resource",
   },
+  -- directed-goal keywords too generic to grow a template on their own: they
+  -- weigh 1 (a template's distinctive keywords weigh 2; growth needs >= 2), so
+  -- "report" alone grows nothing while "report errors" grows error_reporter.
+  goal_generic_keywords = {
+    "izle", "monitor", "watch", "takip", "track", "log", "report", "rapor",
+    "guard", "kaynak", "resource", "kendi", "mesaj", "message",
+  },
   -- exploit: the highest-FITNESS organ's template → this goal (deepens what pays)
   template_goal = {
     error_reporter = "report errors",
@@ -207,8 +232,9 @@ return {
   generation           = 0,      -- this instance's clone depth
   colony_root          = nil,    -- shared colony dir root (defaults to EVOLUA_HOME)
   -- MESH (multi-host colony, opt-in): a host-side nerve bridges colony/peers + colony/inbox
-  -- across machines — UDP broadcast discovery on the LAN, static seeds for Tailscale/VPN/WAN.
-  -- Env: EVOLUA_MESH=1, EVOLUA_MESH_PORT, EVOLUA_MESH_SEEDS=host:port,…, EVOLUA_MESH_TOKEN (optional).
+  -- (+ genepool / outcomes) across machines — UDP broadcast discovery on the LAN, static
+  -- seeds for Tailscale/VPN/WAN. Env: EVOLUA_MESH=1, EVOLUA_MESH_PORT, EVOLUA_MESH_SEEDS=host:port,…,
+  -- EVOLUA_MESH_TOKEN (optional shared secret).
   mesh                 = false,
   mesh_port            = 7707,
   mesh_seeds           = nil,
@@ -231,12 +257,6 @@ return {
   es_sigma0      = 0.2,      -- ES: initial per-gene mutation step size (self-adapted thereafter)
   es_tau         = 0.3,      -- ES: learning rate of the step size (log-normal sigma mutation)
   max_per_template = 3,      -- carrying capacity: max living variants of one species
-  protected_max    = 1,      -- carrying capacity for PROTECTED (seeded-infrastructure) templates —
-                             -- colony/supervisor/explorer. Protected lineages are cull-exempt, so
-                             -- without their own cap they'd breed up to max_per_template and stay
-                             -- there forever (immortal duplicates burning population slots). 1 =
-                             -- singleton infrastructure; raise to let a mutant challenger coexist
-                             -- (only the fittest copy is immortal — surplus copies compete normally)
   grace_ticks    = 25,       -- newborn protection before it can be culled
   tournament_k   = 3,        -- breeding: k-tournament parent-selection sample size (1 = pure elitism)
   cull_rate      = 0.5,      -- death: scales the probabilistic cull (0 = never die, 1 = aggressive)
@@ -245,6 +265,12 @@ return {
   bandit_chance    = 0.15,   -- breeding: chance per step to invest in the highest-UCB template (#13)
   bandit_c         = 1.5,    -- bandit exploration constant (higher = try under-sampled templates more)
   rule_seed        = true,   -- seed one evolvable rule-DSL organ (open-ended GP population)
+  -- templates this life may NEVER grow, by any drive (seed, directed, free, bandit,
+  -- illumination, crossover, HGT, reasoner), e.g. { "load_guard" }. main.lua adds
+  -- colony / supervisor / explorer / rule when --no-colony / --no-supervisor /
+  -- --no-explorer / --no-rule is given. Organs of a disabled template already on
+  -- disk from an earlier life stay there but are not loaded.
+  disabled_templates = {},
   rule_max_rules   = 4,      -- bound a rule organ's genome size
   retire_floor   = 0.5,      -- fitness floor: below 2× this, death probability rises toward 1
   decay_rate     = 0.03,     -- per-step fitness entropy
@@ -263,7 +289,22 @@ return {
 
   -- reporting
   report_flush = 12,         -- observations buffered before a report is written
+  -- INFORMATION VALUE of reports (core/reporter.lua): honest fitness pays for handling a
+  -- stimulus but can't tell a finding from "the same line again with other numbers"
+  report_stale_sim    = 0.7,  -- a report this similar (shape, digits ignored) to the organ's previous one is noise…
+  report_stale_ticks  = 15,   -- …but only when it follows the previous one within this many ticks (rapid-fire)
+  report_stale_penalty= 0.5,  -- …and costs this much fitness × similarity (selection kills "same line every cycle")
+  report_reward       = 4.0,  -- a report that follows a quiet spell (≥ report_stale_ticks) earns this — a real
+                              -- finding must outweigh several generations of idle decay
+  report_noise_ratio  = 4,    -- a model-written organ is "doing its job" while stale ≤ ratio × valued reports
+  report_keep  = 100,        -- keep only the newest N report files in reports/
+  rule_cooldown = 10,        -- a rule organ's report/log rule fires at most once per N ticks
+
+  -- bounded growth (an organism may live for months)
+  births_keep        = 200,  -- birth records kept beyond those of living organs
+  rag_max_situations = 500,  -- past situations kept in the reasoner's experience bank
 
   -- logging
   log_level = "info",        -- debug | info | warn | error
+  log_max_bytes = 5 * 1024 * 1024,  -- evolua.log / evolution.log / audit.log rotate to *.1 past this
 }

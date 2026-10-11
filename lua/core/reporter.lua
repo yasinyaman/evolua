@@ -4,6 +4,9 @@
 -- SITUATIONAL summary straight from the world model ("what's going on, by app"),
 -- so reports are meaningful even when no organ logged an observation.
 
+local P     = require("core.platform")
+local Brain = require("core.brain")
+
 local Reporter = {}
 Reporter.__index = Reporter
 
@@ -110,7 +113,17 @@ function Reporter:write_report(reason)
 
   local dir = self.ctx.cfg.reports_dir
   local stamp = os.date("%Y%m%d-%H%M%S")
-  local path = string.format("%s/report-%s-t%d.md", dir, stamp, self.ctx.kernel.tick)
+  local base = string.format("%s/report-%s-t%d", dir, stamp, self.ctx.kernel.tick)
+  -- two reports can land in the same second AND tick (e.g. buffer-full then the
+  -- shutdown flush) — never overwrite: suffix -2, -3, … until the name is free
+  local path, n = base .. ".md", 1
+  while true do
+    local probe = io.open(path, "r")
+    if not probe then break end
+    probe:close()
+    n = n + 1
+    path = string.format("%s-%d.md", base, n)
+  end
   local fh = io.open(path, "w")
   if not fh then return end
 
@@ -118,8 +131,11 @@ function Reporter:write_report(reason)
   fh:write(string.format("- mode: **%s**%s · trigger: %s\n", self.ctx.cfg.mode,
     self.ctx.cfg.goal and self.ctx.cfg.goal ~= "" and (" · goal: _" .. self.ctx.cfg.goal .. "_") or "",
     reason or "?"))
-  fh:write(string.format("- tick: %d · generation: %d · organs: %d\n\n",
-    self.ctx.kernel.tick, self.ctx.memory.data.generation, #self.ctx.registry:list()))
+  local b = Brain.info()
+  fh:write(string.format("- tick: %d · generation: %d · organs: %d · brain: %s%s\n\n",
+    self.ctx.kernel.tick, self.ctx.memory.data.generation, #self.ctx.registry:list(),
+    b.kind == "none" and "rules" or (b.name .. " (" .. b.kind .. ")"),
+    b.params_b and string.format(", %.2gB", b.params_b) or ""))
 
   self:_situational(fh)
 
@@ -162,9 +178,27 @@ function Reporter:write_report(reason)
   fh:close()
   self.ctx.log:info("\27[32m▣ report written: %s (%d obs)\27[0m", path, #self.buf)
   self.buf = {}
+  self:rotate(dir)
 end
 
--- backward-compatible alias (kernel shutdown / older callers)
-function Reporter:flush(_final) self:write_report("flush") end
+-- keep only the newest report_keep reports (names sort chronologically)
+function Reporter:rotate(dir)
+  local keep = self.ctx.cfg.report_keep or 100
+  if keep <= 0 then return end
+  local reports = {}
+  for _, name in ipairs(P.list_dir(dir)) do
+    if name:match("^report%-.+%.md$") then reports[#reports + 1] = name end
+  end
+  if #reports <= keep then return end
+  table.sort(reports)
+  for i = 1, #reports - keep do os.remove(dir .. "/" .. reports[i]) end
+end
+
+-- shutdown flush: write out buffered observations only. With an empty buffer
+-- there is nothing new to say (the periodic report already covers the world view).
+function Reporter:flush(_final)
+  if #self.buf == 0 then return end
+  self:write_report("flush")
+end
 
 return Reporter

@@ -5,6 +5,7 @@
 
 local Templates = require("core.templates")
 local EU        = require("core.evo_util")   -- shared ES kernel (gauss, es_step)
+local Log       = require("core.log")        -- rotating append for evolution.log
 
 local Evolver = {}
 Evolver.__index = Evolver
@@ -26,15 +27,49 @@ local function deepcopy(v)
   return c
 end
 
+-- is this organ's lineage PROTECTED seeded infrastructure (colony / supervisor /
+-- explorer)? Such lineages are exempt from culling: losing one would silently and
+-- permanently remove a capability for the rest of the life (their synthetic
+-- triggers mean free-drive can't regrow them). They are also singletons (see
+-- spawn). The flag lives on the template so evolvable lineages — e.g. rule
+-- organs (also *.tick) — stay cullable.
+local function is_protected(template_key)
+  local tpl = Templates[template_key]
+  return tpl and tpl.protected == true
+end
+
+-- names never repeat across lives: the per-template counter is persisted
+-- (memory.name_seq), because births — the other record of used names — is pruned
 local function unique_name(self, base)
   self.naming[base] = (self.naming[base] or 0) + 1
+  local md = self.ctx.memory.data
+  md.name_seq = md.name_seq or {}
+  md.name_seq[base] = self.naming[base]
   return string.format("gen_%s_%d", base, self.naming[base])
 end
 
+-- may this template be grown in this life? Templates switched off by a flag
+-- (--no-colony / --no-supervisor / --no-explorer / --no-rule) or listed in
+-- cfg.disabled_templates are never grown, whichever drive asks for them.
+function Evolver:allowed(template_key)
+  local off = self.ctx.cfg.disabled_templates
+  return Templates[template_key] ~= nil and not (off and off[template_key])
+end
+
 -- write a generated organ to disk and load it -----------------------------
+-- This is the ONE gate every drive passes through (seed, directed, free, bandit,
+-- MAP-Elites illumination, crossover, HGT, reasoner), so the checks live here.
 function Evolver:spawn(template_key, genes, lineage, sigma)
   local tpl = Templates[template_key]
   if not tpl then return nil end
+  if not self:allowed(template_key) then
+    self.ctx.log:debug("evolver: <%s> is disabled for this life — not growing it", template_key)
+    return nil
+  end
+  -- protected infrastructure (colony / supervisor / explorer) is a SINGLETON. It
+  -- is cull-exempt, so extra copies were never selected, only accumulated: three
+  -- supervisors, three explorers each running `find`, two colonies handling every ping.
+  if tpl.protected and self:population(template_key) >= 1 then return nil end
   genes = genes or {}
   -- fill defaults
   for k, v in pairs(tpl.default_genes or {}) do
@@ -72,33 +107,12 @@ function Evolver:population(template_key)
   return n
 end
 
--- is this organ's lineage PROTECTED seeded infrastructure (colony / supervisor /
--- explorer)? Protection means the LINEAGE never goes extinct — losing it would
--- silently and permanently remove a capability for the rest of the life (their
--- synthetic triggers mean free-drive can't regrow them). It does NOT mean every
--- copy is immortal: see `capacity()` and the cull step. The flag lives on the
--- template so evolvable lineages — e.g. rule organs (also *.tick) — stay cullable.
-local function is_protected(template_key)
-  local tpl = Templates[template_key]
-  return tpl and tpl.protected == true
-end
-
--- carrying capacity of a species: protected infrastructure gets its own (tight)
--- cap. Cull-exempt + breedable would otherwise fill max_per_template with
--- immortal duplicates — every breeding path (mutate / crossover / bandit / HGT)
--- must go through here, not read max_per_template directly.
-function Evolver:capacity(template_key)
-  local cfg = self.ctx.cfg
-  if is_protected(template_key) then return cfg.protected_max or 1 end
-  return cfg.max_per_template or 3
-end
-
 -- mutate: clone an organ with perturbed numeric genes ---------------------
 function Evolver:mutate(name)
   local rec = self.organs[name]
   if not rec then return nil end
   -- carrying capacity: don't let one species overrun the population
-  if self:population(rec.template) >= self:capacity(rec.template) then
+  if self:population(rec.template) >= (self.ctx.cfg.max_per_template or 3) then
     return nil
   end
   local tpl = Templates[rec.template]
@@ -123,6 +137,15 @@ function Evolver:mutate(name)
 end
 
 -- does any matching organ already serve this trigger? ---------------------
+-- is there ANY blueprint that answers this stimulus? (the synthesizer organ asks
+-- this to find needs the template floor cannot meet — those go to the model)
+function Evolver:template_for(trigger)
+  for key, tpl in pairs(Templates) do
+    if tpl.triggers == trigger and self:allowed(key) then return key end
+  end
+  return nil
+end
+
 function Evolver:serves(trigger)
   for _, rec in pairs(self.organs) do
     if Templates[rec.template] and Templates[rec.template].triggers == trigger then
@@ -132,30 +155,51 @@ function Evolver:serves(trigger)
   return false
 end
 
--- is there ANY blueprint that answers this stimulus? (the synthesizer organ asks
--- this to find needs the template floor cannot meet — those go to the model)
-function Evolver:template_for(trigger)
-  for key, tpl in pairs(Templates) do
-    if tpl.triggers == trigger then return key end
+-- does a word of `text` START with kw? Turkish suffixes still match ("izle" in
+-- "izlemek") but a keyword buried mid-word doesn't ("load" in "download", "üre"
+-- in "süre"). Bytes >= 128 are UTF-8 letters, so they count as word characters.
+local function word_prefix(text, kw)
+  local init = 1
+  while true do
+    local s = text:find(kw, init, true)
+    if not s then return false end
+    local prev = s > 1 and text:byte(s - 1) or nil
+    if not prev or not (prev >= 128 or string.char(prev):match("%w")) then return true end
+    init = s + 1
   end
-  return nil
 end
 
 -- pick templates relevant to a directed goal string -----------------------
-local function goal_templates(goal)
-  local picks, low = {}, goal:lower()
+-- A template's own (distinctive) keywords weigh 2; generic ones
+-- (cfg.goal_generic_keywords: izle/monitor/log/report …) and keywords several
+-- templates share weigh 1. A template grows at score >= 2, so "report errors"
+-- grows the error reporter while "report" alone, or the "izle" in "dosya
+-- değişikliklerini izle", no longer grows every template that lists it.
+local function goal_templates(goal, cfg)
+  local low = goal:lower()
+  local generic, owners = {}, {}
+  for _, w in ipairs(cfg.goal_generic_keywords or {}) do generic[w] = true end
+  for _, tpl in pairs(Templates) do
+    for _, kw in ipairs(tpl.goal_keywords or {}) do owners[kw] = (owners[kw] or 0) + 1 end
+  end
+  local picks = {}
   for key, tpl in pairs(Templates) do
+    local score = 0
     for _, kw in ipairs(tpl.goal_keywords or {}) do
-      if low:find(kw, 1, true) then picks[key] = kw; break end   -- value = the keyword that matched
+      if word_prefix(low, kw) then
+        score = score + ((generic[kw] or owners[kw] > 1) and 1 or 2)
+      end
     end
+    if score >= 2 then picks[key] = true end
   end
   return picks
 end
+Evolver.goal_templates = goal_templates   -- exposed for tests
 
--- public wrapper: which blueprints does this goal text select? (empty = the
--- template floor has nothing for it → a synthesis candidate)
-function Evolver:goal_templates(goal)
-  return goal_templates(goal or "")
+-- which blueprints does this goal text select? (empty = the template floor has
+-- nothing specific for it → a synthesis candidate for the synth organ)
+function Evolver:goal_picks(goal)
+  return goal_templates(goal or "", self.ctx.cfg)
 end
 
 -- k-tournament: sample k organs, return the fittest of the sample. Unlike pure
@@ -177,6 +221,9 @@ end
 -- load (hot-reload). Seed both from persisted births: continue the name sequence
 -- past the highest used index, and put still-living organs back under selection.
 function Evolver:rehydrate()
+  for tpl, n in pairs(self.ctx.memory.data.name_seq or {}) do
+    if n > (self.naming[tpl] or 0) then self.naming[tpl] = n end
+  end
   local births = self.ctx.memory.data.births or {}
   for _, b in ipairs(births) do
     if b.organ and b.template then
@@ -190,6 +237,46 @@ function Evolver:rehydrate()
           template = b.template, genes = b.genes or {}, born_tick = self.ctx.kernel.tick,
           sigma = b.sigma,                       -- re-adopt the lineage's learned ES step sizes
         }
+      end
+    end
+  end
+  -- lives from before protected organs became singletons may have left several
+  -- copies of one; keep the fittest and retire the rest
+  local fit, keep = self.ctx.memory.data.fitness, {}
+  for name, rec in pairs(self.organs) do
+    if is_protected(rec.template) then
+      local cur = keep[rec.template]
+      if not cur or (fit[name] or 0) > (fit[cur] or 0) then keep[rec.template] = name end
+    end
+  end
+  for name, rec in pairs(self.organs) do
+    if is_protected(rec.template) and keep[rec.template] ~= name then
+      self.ctx.registry:retire(name, "surplus copy of a singleton organ", true)
+      self.organs[name] = nil
+      fit[name] = nil
+    end
+  end
+  -- protected organs don't evolve (cull-exempt singletons), so each is just its
+  -- blueprint rendered with its genes. Re-render any whose source differs from
+  -- the current blueprint: a fix to colony/supervisor/explorer then reaches
+  -- organs seeded by an older version instead of waiting for ./clean.sh.
+  for name, rec in pairs(self.organs) do
+    local tpl, loaded = Templates[rec.template], self.ctx.registry.loaded[name]
+    if is_protected(rec.template) and loaded and loaded.path then
+      for k, v in pairs(tpl.default_genes or {}) do    -- genes the blueprint gained since
+        if rec.genes[k] == nil then rec.genes[k] = deepcopy(v) end
+      end
+      local src = tpl.build(name, rec.genes)
+      local fh = io.open(loaded.path, "r")
+      local cur = fh and fh:read("*a")
+      if fh then fh:close() end
+      if cur ~= src then
+        local out = io.open(loaded.path, "w")
+        if out then
+          out:write(src); out:close()
+          self.ctx.log:info("refreshed organ '%s' from the current <%s> blueprint", name, rec.template)
+          self.ctx.registry:load(loaded.path)
+        end
       end
     end
   end
@@ -262,15 +349,19 @@ function Evolver:bandit_pick()
   for _, n in pairs(tries) do N = N + n end
   local c = self.ctx.cfg.bandit_c or 1.5
   local best, bscore = nil, -1e18
-  for key in pairs(Templates) do
-    local n = tries[key] or 0
-    local score
-    if n == 0 then score = 1e17                     -- optimistic prior: try each arm once
-    else
-      local avg = cnt[key] and (sum[key] / cnt[key]) or 0
-      score = avg + c * math.sqrt(math.log(N + 1) / n)
+  for key, tpl in pairs(Templates) do
+    -- never invest in a disabled template, nor in protected singletons (seeded
+    -- once; a second copy is refused by spawn anyway)
+    if self:allowed(key) and not tpl.protected then
+      local n = tries[key] or 0
+      local score
+      if n == 0 then score = 1e17                   -- optimistic prior: try each arm once
+      else
+        local avg = cnt[key] and (sum[key] / cnt[key]) or 0
+        score = avg + c * math.sqrt(math.log(N + 1) / n)
+      end
+      if score > bscore then best, bscore = key, score end
     end
-    if score > bscore then best, bscore = key, score end
   end
   return best
 end
@@ -286,7 +377,7 @@ function Evolver:step()
 
   -- 1) DIRECTED drive: make sure goal-relevant organs exist
   if cfg.mode == "directed" and cfg.goal and cfg.goal ~= "" then
-    for key in pairs(goal_templates(cfg.goal)) do
+    for key in pairs(goal_templates(cfg.goal, cfg)) do
       local tpl = Templates[key]
       if tpl and not self:serves(tpl.triggers) then
         local inh = cfg.inherited_genes and cfg.inherited_genes[key]   -- vertical transfer (#11)
@@ -306,7 +397,7 @@ function Evolver:step()
     if s.unhandled_streak >= (cfg.need_threshold or 6) then
       -- find a template that answers this stimulus and isn't serving yet
       for key, tpl in pairs(Templates) do
-        if tpl.triggers == t and not self:serves(t) then
+        if tpl.triggers == t and self:allowed(key) and not self:serves(t) then
           ctx.log:info("unmet need: '%s' ignored %d× → growing <%s>", t, s.unhandled_streak, key)
           self:spawn(key)
           s.unhandled_streak = 0
@@ -352,15 +443,10 @@ function Evolver:step()
     local c = ctx.memory.data.counters or {}
     local okc, fbc = c.llm_ok or 0, c.llm_fallback or 0
     local fbr = (okc + fbc) > 0 and (fbc / (okc + fbc)) or 0
-    local mpath = (cfg.state_dir or ".") .. "/evolution.log"
-    local existed = io.open(mpath, "r"); if existed then existed:close() end
-    local mf = io.open(mpath, "a")
-    if mf then
-      if not existed then mf:write("tick\tgen\tpop\tmean\tmax\tmin\tstddev\tspecies\tcells\tfallback\n") end
-      mf:write(string.format("%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%d\t%.3f\n",
-        ctx.kernel.tick, ctx.memory.data.generation, n, mean, mx, mn, sd, nsp, ncells, fbr))
-      mf:close()
-    end
+    Log.append((cfg.state_dir or ".") .. "/evolution.log",
+      string.format("%d\t%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%d\t%d\t%.3f\n",
+        ctx.kernel.tick, ctx.memory.data.generation, n, mean, mx, mn, sd, nsp, ncells, fbr),
+      cfg.log_max_bytes, "tick\tgen\tpop\tmean\tmax\tmin\tstddev\tspecies\tcells\tfallback\n")
     -- dump the current repertoire (cell -> best organ) for a visible QD map
     local rf = io.open((cfg.state_dir or ".") .. "/repertoire.txt", "w")
     if rf then
@@ -394,51 +480,22 @@ function Evolver:step()
     -- worst. Past grace, an organ's death chance rises as its fitness sinks below
     -- the floor (0 at/above 2×floor, 0.5 at the floor, →1 toward zero), scaled by
     -- cull_rate so selection stays gentle. Protected seeded-infrastructure
-    -- lineages (tpl.protected) keep ONE immortal keeper — the fittest living copy
-    -- (free-drive can't regrow them). Surplus copies (bred before the cap, or
-    -- inherited from a previous life) compete and die like any other organ, so
-    -- protection can never become a population leak.
-    local keepers, pcount = {}, {}
-    for _, r in ipairs(ranked) do          -- ranked is sorted by score desc → first seen wins
-      local org = self.organs[r.name]
-      if org and is_protected(org.template) then
-        if not keepers[org.template] then keepers[org.template] = r.name end
-        pcount[org.template] = (pcount[org.template] or 0) + 1
-      end
-    end
-    -- CAP ENFORCEMENT for protected templates: surplus above `protected_max`
-    -- (inherited from a life that bred them before the cap existed, or left over
-    -- after the cap was lowered) is thinned deterministically, weakest first.
-    -- Fitness selection alone can't do this — riders on self.heartbeat sit far
-    -- above the death floor forever — so the cap is enforced like the colony's
-    -- safety caps: a bound, not a selection pressure. The keeper is never thinned.
-    for i = #ranked, 1, -1 do             -- ascending score → weakest surplus dies first
-      local r = ranked[i]
-      local org = self.organs[r.name]
-      local tk = org and org.template
-      if tk and is_protected(tk) and keepers[tk] ~= r.name
-         and (pcount[tk] or 0) > self:capacity(tk) then
-        ctx.log:warn("thinning protected <%s>: %d alive > cap %d → retiring surplus '%s'",
-          tk, pcount[tk], self:capacity(tk), r.name)
-        ctx.registry:retire(r.name, "over protected_max", true)
-        self.organs[r.name] = nil
-        ctx.memory.data.fitness[r.name] = nil
-        pcount[tk] = pcount[tk] - 1
-        table.remove(ranked, i)
-      end
-    end
+    -- lineages (tpl.protected) are exempt — free-drive can't regrow them.
     local floor2 = 2 * (cfg.retire_floor or 0.5)
     local cull_rate = cfg.cull_rate or 0.5
     for _, r in ipairs(ranked) do
       local org = self.organs[r.name]
       if floor2 > 0                                      -- guard retire_floor=0 → division by zero
-         and org and keepers[org.template] ~= r.name     -- the lineage's keeper is immortal
+         and org and not is_protected(org.template)
          and not (self.elites and self.elites[r.name])   -- keep each cell's elite (QD diversity)
-         and not (tostring(org.template):match("^synth:")                      -- a model-written organ whose findings
-                  and ((ctx.memory.data.valued or {})[r.name] or 0) > 0        -- outweigh its noise is doing its job
-                  and ((ctx.memory.data.stale or {})[r.name] or 0) <= (cfg.report_noise_ratio or 4) * ((ctx.memory.data.valued or {})[r.name] or 0))
-         -- model-written organs (template "synth:*") get the synthesizer's longer grace: it runs
-         -- its own selection over them and feeds the verdict back into the next synthesis
+         -- a model-written organ ("synth:*") whose findings outweigh its noise is doing its
+         -- job (rare-event detectors report once a minute and were culled between findings)
+         and not (tostring(org.template):match("^synth:")
+                  and ((ctx.memory.data.valued or {})[r.name] or 0) > 0
+                  and ((ctx.memory.data.stale or {})[r.name] or 0)
+                      <= (cfg.report_noise_ratio or 4) * ((ctx.memory.data.valued or {})[r.name] or 0))
+         -- model-written organs get the synthesizer's longer grace: it runs its own
+         -- selection over them and feeds the verdict back into the next synthesis
          and r.age > (tostring(org.template):match("^synth:") and (cfg.synth_grace or 40) or (cfg.grace_ticks or 25)) then
         local p_die = math.max(0, 1 - r.score / floor2)
         if p_die > 0 and math.random() < p_die * cull_rate then
@@ -458,7 +515,7 @@ function Evolver:step()
         local ra, rb = self.organs[a.name], self.organs[b.name]
         local tpl = ra and rb and ra.template == rb.template and Templates[ra.template]
         if tpl and tpl.crossover_genes
-           and self:population(ra.template) < self:capacity(ra.template) then
+           and self:population(ra.template) < (cfg.max_per_template or 3) then
           self:spawn(ra.template, tpl.crossover_genes(ra.genes, rb.genes, cfg), a.name .. "×" .. b.name)
         end
       end
@@ -479,12 +536,20 @@ function Evolver:step()
         end
       end
       if bestnm then self:mutate(bestnm)
-      elseif self:population(key) < self:capacity(key) then self:spawn(key) end
+      elseif self:population(key) < (cfg.max_per_template or 3) then self:spawn(key) end
     end
   end
 
   -- 4) ENTROPY: idle capabilities slowly decay (keeps selection honest)
   ctx.memory:decay(cfg.decay_rate or 0.03)
+
+  -- 5) bound the birth record: living organs + the most recent births_keep
+  local alive = {}
+  for nm in pairs(self.organs) do
+    local l = ctx.registry.loaded[nm]
+    if l and l.alive then alive[nm] = true end
+  end
+  ctx.memory:prune_births(alive, cfg.births_keep or 200)
 end
 
 return Evolver

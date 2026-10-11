@@ -39,9 +39,14 @@ blueprints in `templates.lua`):
 spawned organ 'gen_colony_1'     from <colony>
 spawned organ 'gen_explorer_1'   from <explorer>
 spawned organ 'gen_supervisor_1' from <supervisor>
-spawned organ 'gen_supervisor_2' from <supervisor>   ← evolution already bred 2 variants
-spawned organ 'gen_supervisor_3' from <supervisor>     (fittest organ, capped at max_per_template)
+spawned organ 'gen_supervisor_2' from <supervisor>   ← duplicates: the bug, see the note below
+spawned organ 'gen_supervisor_3' from <supervisor>
 ```
+
+> This capture predates protected organs becoming singletons. The two extra supervisors were
+> mutation copies of an organ that topped the leaderboard by handling the `host.vitals`
+> stimulus it emitted itself. A current run seeds exactly one colony, explorer and supervisor,
+> and the bus gives an organ no credit for its own emits.
 
 ## 2. Perception — an entity-based world model
 

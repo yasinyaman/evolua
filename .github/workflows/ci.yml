@@ -1,0 +1,104 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Lua
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update && sudo apt-get install -y lua5.4
+            echo "LUA=lua5.4" >> "$GITHUB_ENV"
+          else
+            brew install lua
+            echo "LUA=lua" >> "$GITHUB_ENV"
+          fi
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Rust unit tests
+        run: cargo test
+      - name: Lua unit tests
+        run: $LUA tests/run.lua
+      - name: Bounded behavior suite
+        run: scripts/fulltest.sh
+
+  # every opt-in feature set must keep compiling, lint-clean, with its tests
+  # (embed_smol is left out: it needs models/smol.gguf, which isn't in the repo)
+  features:
+    name: features (${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ["acquire", "llm", "service", "remote", "llm service acquire remote"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.features }}
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --features "${{ matrix.features }}" -- -D warnings
+      - name: Tests
+        run: cargo test --locked --features "${{ matrix.features }}"
+
+  # the Swift bridge to macOS's on-device model must keep building; its live
+  # test skips itself where the model isn't available (CI runners)
+  apple:
+    name: features (apple, macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: apple
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --features "apple service" -- -D warnings
+      - name: Tests
+        run: cargo test --locked --features "apple service"
+
+  # the Linux release binary is musl-static; prove it still links that way and runs
+  static:
+    name: static linux binary (musl)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: musl
+      - name: musl toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+      - name: Statically linked and alive
+        run: |
+          bin=target/x86_64-unknown-linux-musl/release/evolua
+          file "$bin"
+          file "$bin" | grep -Eq "static(ally|-pie) linked"
+          "$bin" --help > /dev/null
+          EVOLUA_HOME="$RUNNER_TEMP/evo" "$bin" --ticks 5 --tick-seconds 0 --no-clone

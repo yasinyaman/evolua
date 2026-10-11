@@ -128,6 +128,8 @@ local function blend_conf(rule_c, llm_c)
   return math.max(0, math.min(combined, ceiling))
 end
 
+Reasoner._parse_schema, Reasoner._blend_conf = parse_schema, blend_conf   -- for tests
+
 function Reasoner:step()
   local ctx = self.ctx
   if self.ctx.kernel.tick == self.last_tick then return end
@@ -167,7 +169,7 @@ function Reasoner:step()
         ctx.memory:bump("llm_ok")            -- decision brain produced usable output
       else
         ctx.memory:bump("llm_fallback")      -- bottleneck signal for the model ladder
-        ctx.log:debug("reasoner: schema parse failed, using rules")
+        ctx.log:debug("reasoner: schema parse failed, using rules — reply: %q", reply:sub(1, 300))
       end
     else
       ctx.memory:bump("llm_fallback")
@@ -197,10 +199,16 @@ function Reasoner:step()
       decision.salience, decision.confidence, decision.entity, decision.hypothesis, decision.route))
   end
 
-  -- store this situation→interpretation as future experience (weighted by salience)
+  -- store this situation→interpretation as future experience (weighted by salience);
+  -- only the newest rag_max_situations are kept, so a long life can't grow the bank forever
   local sid = "sit:" .. self.ctx.kernel.tick
   self.rag:add(sid, string.format("%s %s %s", decision.entity, top.last_reason or "", decision.hypothesis),
     ctx.worldmodel:salience(top) / 20, { kind = "situation" })
+  self.situations = self.situations or {}
+  table.insert(self.situations, sid)
+  while #self.situations > (ctx.cfg.rag_max_situations or 500) do
+    self.rag:remove(table.remove(self.situations, 1))
+  end
 
   -- inform evolution: grow the routed organ if it's warranted and not already serving
   local tkey = decision.route:match("^template:([%a_]+)$")

@@ -12,11 +12,19 @@
 //!   * MESSAGES — the organ writes mail for a peer into `colony/inbox/<peer>/`.
 //!     If that peer's beacon carries `addr=`, the file is remote: we ship it over
 //!     TCP and delete it; the receiving nerve drops it into its own inbox dir.
+//!   * SYNC — the colony's two shared ledgers are gossiped on every beacon round:
+//!     `colony/genepool/<template>` (horizontal gene transfer: the fittest genome
+//!     per template) and `colony/outcomes/<member>` (the S4 purpose ledger). A file
+//!     is shipped to a peer when it is newer than the copy last shipped there; the
+//!     receiver keeps a genepool entry only if it beats its own (the same rule the
+//!     organ applies locally), and never lets a remote copy replace its own outcome
+//!     file. The organ reads the dirs as before and learns from the whole mesh.
 //!
 //! Like `supervisor.rs` this sits BELOW evolution: transport, not behaviour.
 //! Opt-in (`--mesh` / `EVOLUA_MESH=1`). Open by design (see project notes);
 //! `EVOLUA_MESH_TOKEN` adds a shared-secret check when the operator wants one.
 
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
@@ -120,7 +128,7 @@ fn hostname() -> String {
 /// `state/mesh_id` is written by main.lua once the colony id is known.
 fn wait_for_id(home: &Path, log: &Path) -> (String, String) {
     let p = home.join("state").join("mesh_id");
-    let started = Instant::now();
+    let mut waited = 0u64;
     loop {
         if let Ok(s) = fs::read_to_string(&p) {
             let id = s.lines().find_map(|l| l.strip_prefix("id=")).unwrap_or("").trim().to_string();
@@ -129,7 +137,9 @@ fn wait_for_id(home: &Path, log: &Path) -> (String, String) {
                 return (id, gen);
             }
         }
-        if started.elapsed() > Duration::from_secs(60) && started.elapsed().as_secs() % 60 == 0 {
+        waited += 1;
+        if waited >= 60 {
+            waited = 0;
             append(log, "waiting for state/mesh_id (is this a plain-lua run without the colony?)");
         }
         thread::sleep(Duration::from_secs(1));
@@ -140,10 +150,35 @@ struct Shared {
     me: String,
     peers_dir: PathBuf,
     inbox_dir: PathBuf,
+    colony_dir: PathBuf,
     log: PathBuf,
     token: Option<String>,
     counter: AtomicU64,
     known: Mutex<Vec<(String, SocketAddr)>>, // remote peers we have heard from (for status)
+    /// (peer id, ledger, file) → mtime of the copy last shipped there
+    shipped: Mutex<HashMap<(String, String, String), u64>>,
+    /// ledger files received at least once (log noise control)
+    seen: Mutex<HashSet<String>>,
+}
+
+/// The two colony ledgers the mesh keeps in sync (directory names under colony/).
+const LEDGERS: [&str; 2] = ["genepool", "outcomes"];
+
+/// `fitness <n>` as the colony writes it at the top of a genepool entry.
+fn genepool_fitness(body: &str) -> f64 {
+    body.lines()
+        .find_map(|l| l.strip_prefix("fitness ").and_then(|v| v.trim().parse::<f64>().ok()))
+        .unwrap_or(f64::NEG_INFINITY)
+}
+
+/// A ledger file name is a template key or a colony id: one path segment, nothing else.
+fn safe_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && !name.contains(['/', '\\'])
+        && name != "."
+        && name != ".."
+        && !name.starts_with('.')
 }
 
 impl Shared {
@@ -191,6 +226,55 @@ impl Shared {
         }
     }
 
+    /// Ledger sync: `EVOLUA1 SYNC ledger=<genepool|outcomes> name=<file> [token=..]` + newline + body
+    fn on_sync(&self, head: &str, body: &str) {
+        if !self.authorised(head) {
+            return;
+        }
+        let field = |k: &str| head.split_whitespace().find_map(|kv| kv.strip_prefix(&format!("{k}="))).map(|s| s.to_string());
+        let (Some(ledger), Some(name)) = (field("ledger"), field("name")) else { return };
+        if !LEDGERS.contains(&ledger.as_str()) || !safe_name(&name) {
+            return;
+        }
+        let dir = self.colony_dir.join(&ledger);
+        let path = dir.join(&name);
+        let mut notable = true;
+        match ledger.as_str() {
+            // a genome replaces ours only if it is fitter — the organ's own publish rule,
+            // so two nodes can't ping-pong equal entries forever
+            "genepool" => {
+                let mine = fs::read_to_string(&path).map(|s| genepool_fitness(&s)).unwrap_or(f64::NEG_INFINITY);
+                let theirs = genepool_fitness(body);
+                if theirs <= mine {
+                    return;
+                }
+                // fitness creeps up every heartbeat on a living organ; log the first copy and
+                // real jumps, not every tick's decimals
+                notable = mine == f64::NEG_INFINITY || theirs - mine >= 1.0;
+            }
+            // my own outcome file is mine to write; every other member's is a copy
+            _ => {
+                if name == self.me {
+                    return;
+                }
+            }
+        }
+        // an identical copy is not written: a write would bump the mtime and send the same
+        // bytes round the mesh again (B → C → B …) forever at beacon cadence
+        if fs::read_to_string(&path).map(|cur| cur == body).unwrap_or(false) {
+            return;
+        }
+        let _ = fs::create_dir_all(&dir);
+        if fs::write(&path, body).is_ok() {
+            // genomes are rare, meaningful events; a member's outcome file is rewritten every
+            // heartbeat, so it is logged once per member
+            let first = self.seen.lock().unwrap().insert(format!("{ledger}/{name}"));
+            if first || (ledger == "genepool" && notable) {
+                append(&self.log, &format!("sync: {ledger}/{name} received"));
+            }
+        }
+    }
+
     /// Mail: `EVOLUA1 MSG to=<id> [token=..]` + newline + body (body carries `from=`)
     fn on_msg(&self, head: &str, body: &str) {
         if !self.authorised(head) {
@@ -216,10 +300,13 @@ fn run(home: PathBuf, cfg: Config) {
         me: me.clone(),
         peers_dir: colony.join("peers"),
         inbox_dir: colony.join("inbox"),
+        colony_dir: colony.clone(),
         log: log.clone(),
         token: cfg.token.clone(),
         counter: AtomicU64::new(0),
         known: Mutex::new(Vec::new()),
+        shipped: Mutex::new(HashMap::new()),
+        seen: Mutex::new(HashSet::new()),
     });
     let host = hostname();
     let token_kv = cfg.token.as_ref().map(|t| format!(" token={t}")).unwrap_or_default();
@@ -299,6 +386,7 @@ fn run(home: PathBuf, cfg: Config) {
             for (_, addr) in known {
                 send_line(&addr.to_string(), &beacon, "", &log);
             }
+            sync_ledgers(&shared, &log);
         }
         forward_outgoing(&shared, &log);
         thread::sleep(Duration::from_millis(700));
@@ -323,6 +411,60 @@ fn handle_tcp(mut stream: TcpStream, sh: Arc<Shared>) {
         let _ = reader.read_to_string(&mut body);
         if body.len() <= 64 * 1024 {
             sh.on_msg(&head, &body);
+        }
+    } else if head.starts_with(&format!("{MAGIC} SYNC")) {
+        let mut body = String::new();
+        let _ = reader.read_to_string(&mut body);
+        if body.len() <= 64 * 1024 {
+            sh.on_sync(&head, &body);
+        }
+    }
+}
+
+/// Gossip the colony ledgers (genepool, outcomes) to every remote peer: each file goes
+/// to a peer once per modification. Copies received from one peer are forwarded to the
+/// others the same way, so the whole mesh converges; the receiver's rules (fitter-only
+/// genomes, never my own outcome file) keep that from looping.
+fn sync_ledgers(sh: &Arc<Shared>, log: &Path) {
+    let Ok(peers) = fs::read_dir(&sh.peers_dir) else { return };
+    let token_kv = sh.token.as_ref().map(|t| format!(" token={t}")).unwrap_or_default();
+    for entry in peers.flatten() {
+        let id = entry.file_name().to_string_lossy().to_string();
+        if id == sh.me {
+            continue;
+        }
+        let Ok(beacon) = fs::read_to_string(entry.path()) else { continue };
+        let Some(addr) = beacon.split_whitespace().find_map(|kv| kv.strip_prefix("addr=")) else { continue };
+        for ledger in LEDGERS {
+            let Ok(files) = fs::read_dir(sh.colony_dir.join(ledger)) else { continue };
+            for f in files.flatten() {
+                let name = f.file_name().to_string_lossy().to_string();
+                if !safe_name(&name) {
+                    continue;
+                }
+                let mtime = f
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let key = (id.clone(), ledger.to_string(), name.clone());
+                if sh.shipped.lock().unwrap().get(&key).is_some_and(|&t| t >= mtime) {
+                    continue;
+                }
+                let Ok(body) = fs::read_to_string(f.path()) else { continue };
+                if body.len() > 64 * 1024 {
+                    continue;
+                }
+                let head = format!("{MAGIC} SYNC ledger={ledger} name={name}{token_kv}");
+                if send_line(addr, &head, &body, log) {
+                    sh.shipped.lock().unwrap().insert(key, mtime);
+                } else {
+                    append(log, &format!("sync: could not reach {id} at {addr} — will retry"));
+                    break;
+                }
+            }
         }
     }
 }

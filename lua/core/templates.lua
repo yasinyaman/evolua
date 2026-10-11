@@ -3,16 +3,11 @@
 -- it exposes, and how to render itself into a standalone plugin .lua file.
 -- New capabilities are BORN here as source code, not hand-written.
 
-local EU = require("core.evo_util")   -- shared ES kernel (es_step) for rule thresholds
+local EU  = require("core.evo_util")   -- shared ES kernel (es_step) for rule thresholds
+local Ser = require("core.serialize")  -- genes → Lua literal (nested tables included)
 
 local function literal(genes)
-  -- render a flat genes table as a Lua literal
-  local parts = {}
-  for k, v in pairs(genes) do
-    local val = type(v) == "string" and string.format("%q", v) or tostring(v)
-    parts[#parts + 1] = string.format("%s = %s", k, val)
-  end
-  return "{ " .. table.concat(parts, ", ") .. " }"
+  return Ser.ser(genes)
 end
 
 -- header shared by every generated organ
@@ -40,10 +35,14 @@ end
 local T = {}
 
 -- threshold guard for a numeric metric (cpu / mem / load) -----------------
-local function guard(metric_event, field, label)
+-- Each guard has its OWN keywords plus the shared generic ones, so "cpu
+-- resource" grows the cpu guard only (it used to grow all three).
+local function guard(metric_event, field, label, keywords)
+  local kws = { "kaynak", "resource", "izle", "monitor", "guard" }
+  for _, k in ipairs(keywords) do kws[#kws + 1] = k end
   return {
     triggers = metric_event,
-    goal_keywords = { "kaynak", "resource", "cpu", "memory", "bellek", "yük", "load", "izle", "monitor", "guard" },
+    goal_keywords = kws,
     default_genes = { threshold = (field == "one") and 4 or 75, cooldown = 5 },
     build = function(name, genes)
       local body = string.format([[
@@ -64,9 +63,10 @@ local function guard(metric_event, field, label)
   }
 end
 
-T["cpu_guard"]  = guard("metric.cpu",  "pct", "CPU")
-T["mem_guard"]  = guard("metric.mem",  "pct", "MEM")
-T["load_guard"] = guard("metric.load", "one", "LOAD")
+T["cpu_guard"]  = guard("metric.cpu",  "pct", "CPU",  { "cpu", "işlemci", "processor" })
+T["mem_guard"]  = guard("metric.mem",  "pct", "MEM",  { "memory", "bellek", "ram" })
+-- "yükü"/"yüke", not a bare "yük": that would also match "yüksek" (= high)
+T["load_guard"] = guard("metric.load", "one", "LOAD", { "load", "yükü", "yüke" })
 
 -- error reporter: collects log.error / self.error and writes reports -------
 T["error_reporter"] = {
@@ -137,12 +137,14 @@ T["vital_monitor"] = {
 -- instances through a shared filesystem "colony" dir, and (b) — ONLY when
 -- cfg.clone_enabled — spawns bounded, mortal OS-process clones of the organism.
 --
--- triggers="colony.tick" is synthetic (nothing ever emits it), so the evolver's
--- free-drive can never grow a self-replicator by accident; the organ is seeded
--- explicitly by main.lua, or grown in directed mode by a matching goal keyword.
--- It listens on the REAL clock (self.heartbeat) at runtime regardless. The
--- population SAFETY caps live in cfg (NOT in genes) so mutation can tune the
--- comms/clone cadences but can never loosen the bounds.
+-- triggers="colony.tick" is synthetic (nothing ever emits it), so the free drive
+-- never picks it. What keeps every OTHER drive from growing a self-replicator is
+-- the evolver's spawn gate: colony is `protected`, so a second living copy is
+-- refused (and the bandit skips it), and --no-colony disables the template for
+-- the whole life. It is seeded by main.lua, or its first copy grown in directed
+-- mode by a matching goal keyword. It listens on the REAL clock (self.heartbeat)
+-- at runtime regardless. The population SAFETY caps live in cfg (NOT in genes),
+-- so no gene change can loosen the bounds.
 T["colony"] = {
   triggers = "colony.tick",
   protected = true,   -- seeded infrastructure: exempt from culling (can't be regrown)
@@ -154,22 +156,9 @@ T["colony"] = {
   build = function(name, genes)
     local body = "local SELF = " .. string.format("%q", name) .. "\n" .. [==[
     local cfg = ctx.cfg
+    local P = ctx.platform              -- OS layer: quoting, mkdir_p, list_dir (no raw shell)
     local function win() return cfg.is_windows end
-    local function shq(s) s = tostring(s); return '"' .. s:gsub('"', '\\"') .. '"' end
-    local function ensure_dir(p)
-      if win() then os.execute('mkdir ' .. shq(p) .. ' 2>nul')
-      else os.execute('mkdir -p ' .. shq(p) .. ' 2>/dev/null') end
-    end
-    local function list_dir(p)
-      local cmd = win() and ('dir /b ' .. shq(p) .. ' 2>nul')
-                          or  ('ls -1 ' .. shq(p) .. ' 2>/dev/null')
-      local out = {}
-      local fh = io.popen and io.popen(cmd)
-      if not fh then return out end
-      for line in fh:lines() do if line ~= "" then out[#out + 1] = line end end
-      fh:close()
-      return out
-    end
+    local shq, ensure_dir, list_dir = P.shq, P.mkdir_p, P.list_dir
     local function read_file(p)
       local fh = io.open(p, "r"); if not fh then return nil end
       local s = fh:read("*a"); fh:close(); return s
@@ -245,6 +234,15 @@ T["colony"] = {
       return sum
     end
 
+    -- the colony's purposes are the canonical goals in cfg.template_goal. Only
+    -- those enter the S4 ledger: a user's free-text --goal (say, a Turkish
+    -- sentence) maps to no template, always pays 0, and would only become a
+    -- bandit arm that wastes splits.
+    local function canonical(goal)
+      for _, g in pairs(cfg.template_goal or {}) do if g == goal then return true end end
+      return false
+    end
+
     -- aggregate the colony's harvested outcomes: goal -> {sum, n} (the S4 ledger)
     local function read_outcomes()
       local dir, agg = root() .. "/colony/outcomes", {}
@@ -252,7 +250,7 @@ T["colony"] = {
         local txt = read_file(dir .. "/" .. fn)
         local g = txt and txt:match("purpose=([^\n]+)")
         local p = txt and tonumber(txt:match("payoff=([%d%.%-]+)"))
-        if g and p then
+        if g and p and canonical(g) then      -- ignores entries older versions wrote
           local a = agg[g] or { sum = 0, n = 0 }
           a.sum, a.n = a.sum + p, a.n + 1; agg[g] = a
         end
@@ -311,20 +309,13 @@ T["colony"] = {
       if split_n % 2 == 1 then return exp or exl else return exl or exp end
     end
 
-    -- VERTICAL GENE TRANSFER (#11): serialize a flat gene/sigma table to a Lua
-    -- literal, and find the parent's FITTEST living organ for the goal's template so
-    -- the child inherits TUNED genes (+ learned ES steps), not template defaults.
-    -- Best-effort: nil if the parent serves no organ of that template (e.g. an
-    -- explore-goal niche it doesn't occupy yet) → child starts fresh, as before.
-    local function ser_flat(t)
-      if not t then return "nil" end
-      local parts = {}
-      for k, v in pairs(t) do
-        local val = (type(v) == "string") and string.format("%q", v) or tostring(v)
-        parts[#parts + 1] = string.format("[%q]=%s", tostring(k), val)
-      end
-      return "{" .. table.concat(parts, ",") .. "}"
-    end
+    -- VERTICAL GENE TRANSFER (#11): find the parent's FITTEST living organ for the
+    -- goal's template so the child inherits TUNED genes (+ learned ES steps), not
+    -- template defaults; they are written with the core serializer (ctx.serialize),
+    -- which handles nested genomes too. Best-effort: nil if the parent serves no
+    -- organ of that template (e.g. an explore-goal niche it doesn't occupy yet) →
+    -- child starts fresh, as before.
+    local ser = ctx.serialize.ser
     local function inherit_for(goal)
       if not goal or goal == "" then return nil end
       local tg  = cfg.template_goal or {}
@@ -404,7 +395,7 @@ T["colony"] = {
 
       -- 4b) S4 harvest: a purpose-directed member reports how well its purpose is
       --     paying off, so the root can learn which purposes are worth spawning.
-      if cfg.goal and cfg.goal ~= "" and cfg.purpose_learn ~= false then
+      if cfg.goal and canonical(cfg.goal) and cfg.purpose_learn ~= false then
         local odir = cdir .. "/outcomes"
         ensure_dir(odir)
         write_file(odir .. "/" .. mid,
@@ -492,7 +483,7 @@ T["colony"] = {
             if itmpl then
               ensure_dir(chome)
               write_file(chome .. "/inherited.lua", string.format(
-                "return { [%q] = { genes = %s, sigma = %s } }\n", itmpl, ser_flat(igenes), ser_flat(isigma)))
+                "return { [%q] = { genes = %s, sigma = %s } }\n", itmpl, ser(igenes), ser(isigma)))
             end
             local flags = " --colony-id " .. cid
               .. " --generation " .. tostring(gen() + 1)
@@ -503,11 +494,11 @@ T["colony"] = {
               .. (goal and (" --goal " .. shq(goal)) or "")  -- born specialized, or generalist
             local cmd
             if win() then
-              cmd = 'cmd /c start "" /B cmd /c "set EVOLUA_HOME=' .. chome .. '&& ' .. prog .. flags .. '"'
-            elseif cfg.embedded then
-              cmd = 'EVOLUA_HOME=' .. shq(chome) .. ' ' .. shq(prog) .. flags .. ' >/dev/null 2>&1 &'
-            else
-              cmd = 'lua -e ' .. shq("EVOLUA_HOME='" .. chome .. "'") .. ' ' .. shq(prog) .. flags .. ' >/dev/null 2>&1 &'
+              -- cmd strips the outermost quote pair, leaving: set "VAR=x"&& "prog" …
+              cmd = 'cmd /c start "" /B cmd /c "set "EVOLUA_HOME=' .. chome .. '"&& ' .. shq(prog) .. flags .. '"'
+            else   -- binary and plain Lua both read $EVOLUA_HOME
+              cmd = 'EVOLUA_HOME=' .. shq(chome) .. ' ' .. (cfg.embedded and "" or "lua ") ..
+                    shq(prog) .. flags .. ' >/dev/null 2>&1 &'
             end
             local reasons = {}
             if why.eager then reasons[#reasons + 1] = "eager" end
@@ -550,7 +541,8 @@ T["colony"] = {
 -- EVOLVABLE layer can react. It is advisory — it logs/reports, never enforces.
 -- In plain-Lua mode there is no host thread, so state/vitals never appears and the
 -- organ simply beats the heartbeat (harmless). triggers="supervisor.tick" is
--- synthetic (never emitted) so free-drive can't grow it; it is seeded in main.lua.
+-- synthetic (never emitted) so free-drive can't grow it; it is seeded in main.lua and,
+-- being protected, never duplicated (see the spawn gate in evolver.lua).
 T["supervisor"] = {
   triggers = "supervisor.tick",
   protected = true,   -- seeded infrastructure: exempt from culling (can't be regrown)
@@ -618,41 +610,54 @@ T["supervisor"] = {
 -- cfg.watch_dirs / cfg.watch_logs so fswatch/logwatch start perceiving them. New
 -- perception → new stimuli → organ growth → and (via the colony) new purposes.
 -- The macro complement to the per-process `curiosity` sensor. triggers is the
--- synthetic "explore.tick"; seeded in main.lua.
+-- synthetic "explore.tick"; seeded in main.lua; protected, so never duplicated.
 T["explorer"] = {
   triggers = "explore.tick",
   protected = true,   -- seeded infrastructure: exempt from culling (can't be regrown)
   goal_keywords = {
-    "keşif", "keşfet", "explore", "discover", "ortam", "environment", "tara", "scan", "merak",
+    -- "tarama", not "tara": that would also match "taraf"/"tarafından" (= side / by)
+    "keşif", "keşfet", "explore", "discover", "ortam", "environment", "tarama", "scan", "merak",
   },
   default_genes = { explore_every = 7, depth = 2, breadth = 6 },
   build = function(name, genes)
     local body = "local SELF = " .. string.format("%q", name) .. "\n" .. [==[
     local cfg = ctx.cfg
-    local function shq(s) s = tostring(s); return '"' .. s:gsub('"', '\\"') .. '"' end
+    local P = ctx.platform              -- OS layer: walk / list_dir without a shell, path checks
     local function run(cmd)
       local p = io.popen and io.popen(cmd); if not p then return "" end
       local o = p:read("*a") or ""; p:close(); return o
     end
-    local function lines_of(cmd)
-      local out = {}; for l in run(cmd):gmatch("[^\n]+") do out[#out + 1] = l end; return out
-    end
     local function contains(t, v) for _, x in ipairs(t or {}) do if x == v then return true end end return false end
     -- skip the organism's OWN output dirs (no self-referential perception loops)
-    -- and known-huge build/vcs dirs (don't drown fswatch).
-    local SKIP = { target = true, [".git"] = true, node_modules = true, build = true,
-                   [".cargo"] = true, dist = true, [".svn"] = true, [".hg"] = true, ["__pycache__"] = true }
+    -- and known-huge build/vcs dirs (don't drown fswatch) — never even descended into.
+    local PRUNE = { "target", ".git", "node_modules", "build", ".cargo", "dist", ".svn", ".hg", "__pycache__" }
+    local SKIP = {}; for _, n in ipairs(PRUNE) do SKIP[n] = true end
     local function skip_dir(path)
-      for seg in path:gmatch("[^/]+") do if SKIP[seg] then return true end end  -- any huge/vcs segment
+      for seg in path:gmatch("[^/\\]+") do if SKIP[seg] then return true end end  -- any huge/vcs segment
       -- skip the organism's OWN data home (explore OUTWARD, not self-referentially)
       for _, d in ipairs({ cfg.colony_root, cfg.plugins_dir, cfg.reports_dir, cfg.state_dir }) do
-        if d and d ~= "" and path:sub(1, #d) == d then return true end
+        -- inside d, on a path boundary (home "/x/evo" must not swallow "/x/evolution")
+        local n = #(d or "")
+        if n > 0 and path:sub(1, n) == d and (#path == n or path:sub(n + 1, n + 1):match("[/\\]")) then
+          return true
+        end
+      end
+      return false
+    end
+    -- a discovered path joins perception only if it is safe to hand to a command
+    -- later (no quotes / metacharacters / control chars); others are logged once
+    local refused = {}
+    local function acceptable(path)
+      if P.safe_path(path) then return true end
+      if not refused[path] then
+        refused[path] = true
+        ctx.log:warn("[%s] not watching %q — unsafe characters in the path", SELF, path)
       end
       return false
     end
 
-    local MOD = { "fs", "log", "net", "cmd", "sys" }
-    local modal_i, sys_done, tools_done = 0, false, false
+    local MOD = { "fs", "log", "net", "cmd", "model", "sys" }
+    local modal_i, sys_done, tools_done, models_done = 0, false, false, false
 
     -- discoveries: report + reward (observability; the real effect is perception growth)
     ctx.bus:subscribe("env.discovery", function(ev)
@@ -672,13 +677,14 @@ T["explorer"] = {
       modal_i = (modal_i % #MOD) + 1
       local m = MOD[modal_i]
       if m == "net" and cfg.explore_net == false then m = "sys" end
+      if m == "model" and cfg.explore_models == false then m = "sys" end
       if m == "cmd" and cfg.explore_tools == false then m = "sys" end
 
       if m == "fs" then
         for _, root in ipairs(roots) do
-          for _, d in ipairs(lines_of("find " .. shq(root) .. " -mindepth 1 -maxdepth " ..
-              tostring(genes.depth or 2) .. " -type d 2>/dev/null | head -n 100")) do
-            if not skip_dir(d) and not contains(cfg.watch_dirs, d) then
+          for _, e in ipairs(P.walk(root, { depth = genes.depth or 2, kind = "dir", limit = 100, prune = PRUNE })) do
+            local d = e.path
+            if not skip_dir(d) and not contains(cfg.watch_dirs, d) and acceptable(d) then
               ctx.bus:emit("env.discovery", { kind = "dir", path = d })
               if cfg.explore_expand ~= false and #(cfg.watch_dirs or {}) < (cfg.explore_max_watch or 12) then
                 table.insert(cfg.watch_dirs, d)       -- expand perception (fswatch picks it up)
@@ -692,8 +698,9 @@ T["explorer"] = {
 
       elseif m == "log" then
         for _, root in ipairs(roots) do
-          for _, f in ipairs(lines_of("find " .. shq(root) .. " -maxdepth 3 -type f -name '*.log' 2>/dev/null | head -n 50")) do
-            if not skip_dir(f) and not contains(cfg.watch_logs, f) then
+          for _, e in ipairs(P.walk(root, { depth = 3, kind = "file", suffix = ".log", limit = 50, prune = PRUNE })) do
+            local f = e.path
+            if not skip_dir(f) and not contains(cfg.watch_logs, f) and acceptable(f) then
               ctx.bus:emit("env.discovery", { kind = "log", path = f })
               if cfg.explore_expand ~= false and #(cfg.watch_logs or {}) < (cfg.explore_max_watch or 12) then
                 table.insert(cfg.watch_logs, f)       -- expand perception (logwatch tails it)
@@ -706,8 +713,13 @@ T["explorer"] = {
         return { handled = true, reward = 1 }
 
       elseif m == "net" then
-        local raw = run("lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null")
-        if raw == "" then raw = run("netstat -an 2>/dev/null | grep -i listen") end
+        local raw
+        if cfg.is_windows then
+          raw = run("netstat -an 2>nul | findstr /i listening")
+        else
+          raw = run("lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null")
+          if raw == "" then raw = run("netstat -an 2>/dev/null | grep -i listen") end
+        end
         local n, names = 0, {}
         for line in raw:gmatch("[^\n]+") do
           if not line:find("^COMMAND") then
@@ -729,10 +741,8 @@ T["explorer"] = {
           local path = (os.getenv and os.getenv("PATH")) or ""
           local seen, n = {}, 0
           for dir in path:gmatch("[^" .. sep .. "]+") do
-            local lister = cfg.is_windows and ("dir /b " .. shq(dir) .. " 2>nul")
-                                            or  ("ls -1 " .. shq(dir) .. " 2>/dev/null")
-            for f in run(lister):gmatch("[^\n]+") do
-              if f ~= "" and not seen[f] then seen[f] = true; n = n + 1 end
+            for _, f in ipairs(P.list_dir(dir)) do
+              if not seen[f] then seen[f] = true; n = n + 1 end
             end
           end
           local have = {}
@@ -742,10 +752,23 @@ T["explorer"] = {
         end
         return { handled = true, reward = 1 }
 
+      elseif m == "model" then   -- decision brains already on this host (scanned once)
+        if not models_done then
+          models_done = true
+          local found = P.models(cfg.model_dirs)
+          for i, md in ipairs(found) do
+            if i > (genes.breadth or 6) then break end
+            ctx.bus:emit("env.discovery", { kind = "model", detail = string.format("%s (%s, %.2gB %s, %d MB)",
+              md.name, md.source, md.params_b or 0, md.quant or "?", md.size_mb or 0) })
+          end
+          if #found > 0 then return { handled = true, reward = 2 } end
+        end
+        return { handled = true, reward = 1 }
+
       else -- sys (once)
         if not sys_done then
           sys_done = true
-          local u = run("uname -srm 2>/dev/null"):gsub("%s+$", "")
+          local u = run(cfg.is_windows and "ver" or "uname -srm 2>/dev/null"):gsub("^%s+", ""):gsub("%s+$", "")
           ctx.bus:emit("env.discovery", { kind = "sys", detail = (u ~= "" and u or "unknown host") })
         end
         return { handled = true, reward = 1 }
@@ -837,6 +860,11 @@ local function render_rules(name, genes)
     if r.field and r.op and OPSET[r.op] then
       cond = "(tonumber(d[" .. q(r.field) .. "]) or 0) " .. r.op .. " " .. tostring(tonumber(r.value) or 0)
     end
+    -- report/log rules fire at most once per cfg.rule_cooldown ticks: the seed
+    -- rule (`tick >= 10 → report`) would otherwise report on every heartbeat
+    if r.action ~= "emit" and r.action ~= "act" then
+      cond = cond .. " and ready(" .. i .. ")"
+    end
     local act
     if r.action == "emit" then
       local em = EMITSET[r.emit] and r.emit or "alert.generic"
@@ -862,12 +890,18 @@ local function render_rules(name, genes)
   end
   if #lines == 0 then lines[1] = "      -- (no rules)" end
   local body = "local SELF = " .. q(name) .. "\n" ..
+    "    local last = {}\n" ..
+    "    local function ready(i)\n" ..
+    "      local t = ctx.kernel.tick\n" ..
+    "      if t - (last[i] or -1e9) < (ctx.cfg.rule_cooldown or 10) then return false end\n" ..
+    "      last[i] = t; return true\n" ..
+    "    end\n" ..
     "    ctx.bus:subscribe(" .. q(stim) .. ", function(ev)\n" ..
     "      local d = ev.data or {}\n" ..
     table.concat(lines, "\n") .. "\n" ..
     "      return false\n" ..
     "    end, SELF)"
-  return render(name, "rule organ (evolved reflex on " .. stim .. ")", { stim }, {}, body)
+  return render(name, "rule organ (evolved reflex on " .. stim .. ")", { stim }, genes, body)
 end
 
 -- structural mutation: rewrite ONE aspect of the genome --------------------------
@@ -934,6 +968,7 @@ end
 T["rule"] = {
   triggers = "rule.tick",      -- synthetic: free-drive can't auto-grow it; it is
                                -- seeded once, then proliferates by mutation/crossover
+                               -- (and the bandit); --no-rule disables it at the spawn gate
   goal_keywords = { "kural", "rule", "refleks", "reflex" },   -- distinctive (no generic "behavior"/"evolve" that a user --goal would collide with)
   -- seed in the self.heartbeat "incubator" niche — alive on every platform (unlike
   -- macOS's /proc-based metric.cpu) so the organ survives long enough to DIFFERENTIATE
@@ -1074,10 +1109,9 @@ T["synth"] = {
         end
       end
       if cfg.mode == "directed" and cfg.goal and cfg.goal ~= "" then
-        local specific = false
-        for _, kw in pairs(ctx.evolver:goal_templates(cfg.goal)) do
-          if not generic(kw) then specific = true end
-        end
+        -- the evolver already weighs generic words (izle/monitor/report…) too low to pick a
+        -- template on their own, so any pick here is a specific one
+        local specific = next(ctx.evolver:goal_picks(cfg.goal)) ~= nil
         local key = "goal:" .. cfg.goal
         -- templates are the FLOOR: by default the model also attempts the goal itself, so
         -- a keyword hit on cpu_guard doesn't stop a purpose-built organ from being written
@@ -1214,6 +1248,42 @@ RULES:
       end)
       return lines, timed_out
     end
+    -- COLUMN AWARENESS. Most sensing commands print padded tables (df, ps, netstat, who):
+    -- the columns line up visually but are separated by a VARYING number of spaces, and a
+    -- small model writing "^(%S+) (%d+)" against them captures the wrong field or nothing.
+    -- fields(l) splits a line the way a parser should; table_shape() says whether a sample
+    -- is such a table (most lines share one field count) and reads its header.
+    local function fields(l)
+      local f = {}
+      for w in l:gmatch("%S+") do f[#f + 1] = w end
+      return f
+    end
+    local function table_shape(lines)
+      local counts, total = {}, 0
+      for _, l in ipairs(lines) do
+        local n = #fields(l)
+        if n >= 2 then counts[n] = (counts[n] or 0) + 1; total = total + 1 end
+      end
+      local ncol, best = nil, 0
+      for n, c in pairs(counts) do if c > best or (c == best and n > (ncol or 0)) then ncol, best = n, c end end
+      if not ncol or ncol < 3 or total < 3 or best < total * 0.6 then return nil end
+      -- a header = a first line whose fields are words, not numbers (±1 field: "Mounted on")
+      local h = fields(lines[1])
+      local header
+      if math.abs(#h - ncol) <= 1 then
+        local words = 0
+        for _, w in ipairs(h) do if not tonumber((w:gsub("[%%,]", ""))) then words = words + 1 end end
+        if words >= #h - 1 then header = h end
+      end
+      return { ncol = ncol, header = header }
+    end
+    local function column_map(shape)
+      if not shape or not shape.header then return nil end
+      local parts = {}
+      for i, h in ipairs(shape.header) do parts[#parts + 1] = string.format("%d=%s", i, h) end
+      return table.concat(parts, " ")
+    end
+
     local function sample_commands(brief, key)
       if not brief then return nil end
       if S.samples[key] ~= nil then return S.samples[key] or nil end
@@ -1236,8 +1306,12 @@ RULES:
               local want = math.min(14, rest)
               for k = 1, want do lines[#lines + 1] = all[head + math.floor(k * rest / want)] end
             end
-            out[#out + 1] = string.format("$ %s   (%d lines total; REAL output on this host — header + evenly sampled lines)\n%s",
-              cmd, #all, table.concat(lines, "\n"))
+            local shape = table_shape(all)
+            local cols = column_map(shape)
+            out[#out + 1] = string.format("$ %s   (%d lines total; REAL output on this host — header + evenly sampled lines)\n%s%s",
+              cmd, #all, table.concat(lines, "\n"),
+              shape and string.format("\n  ↳ this is a %d-column table padded with a VARYING number of spaces%s. Split each line with `for w in line:gmatch(\"%%S+\") do f[#f+1] = w end` and read f[k] — never count spaces, never use a single space in a pattern.",
+                shape.ncol, cols and ("; columns: " .. cols) or "") or "")
           end
         end
       end
@@ -1280,6 +1354,49 @@ RULES:
         if not l:match("^%$ ") then lines[#lines + 1] = l end
       end
       if #lines < 2 then return true end
+      -- COLUMN CHECK: on a padded table every capture of a pattern must be one whole
+      -- field, and the SAME field on every line it matches. A capture that is a piece
+      -- of a field ("3" out of "3.0Gi") or that drifts between columns (a single-space
+      -- separator eats a column where the padding is one space wide) parses garbage
+      -- that only shows up as nonsense reports many ticks later.
+      local shape = table_shape(lines)
+      if shape then
+        local data = {}
+        for _, l in ipairs(lines) do if #fields(l) == shape.ncol then data[#data + 1] = l end end
+        for q in code:gmatch("match%s*%(%s*(%b\"\")") do
+          local fn = cfg.compile("return " .. q, "=pat")
+          local okp, pat = pcall(fn or function() end)
+          if okp and type(pat) == "string" and pat:find("%(") then
+            local cols, partial, matched = {}, 0, 0
+            for _, l in ipairs(data) do
+              local okm, caps = pcall(function() return { l:match(pat) } end)
+              if okm and caps[1] ~= nil then
+                matched = matched + 1
+                local f = fields(l)
+                for i, cap in ipairs(caps) do
+                  local col
+                  for j, w in ipairs(f) do if w == cap then col = j; break end end
+                  if col then cols[i] = cols[i] or {}; cols[i][col] = true else partial = partial + 1 end
+                end
+              end
+            end
+            if matched >= 2 then
+              local drift
+              for i, set in pairs(cols) do
+                local n = 0; for _ in pairs(set) do n = n + 1 end
+                if n > 1 then drift = i end
+              end
+              if drift or partial > matched * 0.3 then
+                local map = column_map(shape)
+                return false, string.format(
+                  "pattern %s does not read the table correctly: %s. The output is a %d-column table padded with a varying number of spaces%s. Split each line into fields with `local f = {} for w in line:gmatch(\"%%S+\") do f[#f+1] = w end`, pick the field by index (f[k]) and tonumber() it (strip units with gsub first) — do not count spaces or use a single space in a pattern. Real lines:\n%s",
+                  q, drift and ("capture " .. drift .. " lands on different columns on different lines") or "its captures are pieces of fields, not whole fields",
+                  shape.ncol, map and ("; columns: " .. map) or "", table.concat({ data[1], data[2] or "", data[3] or "" }, "\n"))
+              end
+            end
+          end
+        end
+      end
       local pats = {}
       local quoted = {}
       for q in code:gmatch("match%s*%(%s*(%b\"\")") do quoted[#quoted + 1] = q end

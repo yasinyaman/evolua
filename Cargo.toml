@@ -1,15 +1,13 @@
-# EvoLua — standalone single-binary crate.
+# EvoLua — standalone single-binary crate (its own repository).
 #
-# This is a SELF-CONTAINED workspace (note the empty [workspace] table below):
-# Cargo treats this directory as its own workspace root, so it does NOT join —
-# and cannot affect — the parent mini-lua-coder workspace. Build it on its own:
-#
-#   cd evolua && cargo build --release
+#   cargo build --release
 #   ./target/release/evolua --ticks 60 --tick-seconds 0.2
 #
 # The Lua organism (lua/) is embedded into the binary via rust-embed and runs in
 # an in-process mlua (Lua 5.4, vendored & statically linked) VM. No external lua
-# interpreter, no shared libs — one file you can copy anywhere.
+# interpreter. A normal build links only system libraries (glibc on Linux,
+# /usr/lib on macOS); for a fully static Linux binary build the musl target, as
+# the release workflow does: --target x86_64-unknown-linux-musl (needs musl-tools).
 [package]
 name = "evolua"
 version = "0.1.0"
@@ -17,7 +15,8 @@ edition = "2021"
 license = "MIT"
 description = "A self-evolving Lua organism that perceives its environment, grows its own plugins, and reports back — as a single binary."
 
-# Detach from the parent workspace without editing it.
+# Its own workspace root, so a checkout nested inside another Cargo workspace
+# still builds on its own.
 [workspace]
 
 [[bin]]
@@ -26,42 +25,60 @@ path = "src/main.rs"
 
 [dependencies]
 # In-process Lua 5.4, built from vendored source and statically linked → the
-# interpreter ships inside the binary (same stack mini-lua-coder uses).
+# interpreter ships inside the binary.
 mlua = { version = "0.10", features = ["lua54", "vendored"] }
 # Embed the lua/ source tree into the binary at compile time.
 rust-embed = "8"
 anyhow = "1"
+# Ollama manifests (model discovery) and the local-service brain speak JSON.
+serde_json = "1"
 
 # Faz 2 — embedded "decision brain" (opt-in). With `llm` off, the binary stays
 # mlua-only and the Lua reasoner falls back to rules. llama-cpp-2 default-features
-# = false → CPU backend (GPU is Faz 4, separate feature).
-llama-cpp-2 = { version = "0.1", default-features = false, optional = true }
+# = false → CPU backend (GPU is Faz 4, separate feature). Pinned to an exact
+# version: 0.1.x releases track llama.cpp and have broken the API between patches.
+llama-cpp-2 = { version = "=0.1.150", default-features = false, optional = true }
 encoding_rs = { version = "0.8", optional = true }
 
 # Faz 4 — model self-upgrade (opt-in). Downloads a larger GGUF over HTTPS and
 # verifies its checksum. ureq is pure-Rust (rustls TLS); sha2 for integrity.
 ureq = { version = "2", optional = true }
 sha2 = { version = "0.10", optional = true }
-# Online decision brain (OpenAI-compatible / Anthropic). Pure-Rust HTTP + JSON.
-serde_json = { version = "1", optional = true }
 
 [features]
 # Default = the MINIMUM-SIZE self-sufficient binary: the in-process llama.cpp
-# runtime + the downloader, but NO model bytes. The organism finds a GGUF already
-# on the host (Ollama / LM Studio / HF cache) or downloads one sized to the host.
+# runtime, the downloader, the online client and the local-server client — but
+# NO model bytes. The organism finds a brain (online service, a local LLM server,
+# a GGUF already on the host) or downloads one sized to the host.
 # `cargo build --release --no-default-features` gives the rules-only binary.
-default = ["llm", "acquire", "remote"]
-# In-process LLM runtime (llama.cpp, CPU). The brain is late-bound via llm_load.
+default = ["llm", "acquire", "remote", "service"]
+# In-process LLM decision brain (llama.cpp, CPU). The brain is late-bound: Lua
+# tells the host which file to load (core/brain.lua).
 llm = ["dep:llama-cpp-2", "dep:encoding_rs"]
-# OPT-IN: bake a tiny model into the binary (expects evolua/models/smol.gguf;
-# adds ~140MB). Only for fully offline hosts with nothing to discover. Implies `llm`.
+# Bake the tiny model into the binary (expects models/smol.gguf — run
+# scripts/fetch_model.sh first). Implies `llm`.
 embed_smol = ["llm"]
 
 # Faz 4 — runtime model acquisition (download + checksum). Exposes model_acquire.
 acquire = ["dep:ureq", "dep:sha2"]
-# Online LLM services as the brain (OpenAI-compatible endpoints + Anthropic).
-# Exposes llm_remote_set / llm_remote_clear; llm_complete routes to it first.
-remote = ["llm", "dep:ureq", "dep:serde_json"]
+
+# Use a running local LLM server as the decision brain: Ollama, LM Studio,
+# llama-server or any OpenAI-compatible endpoint (src/service.rs). Never
+# starts a server; only uses one that is already up.
+service = ["dep:ureq"]
+
+# Use an ONLINE LLM service as the decision brain (src/remote.rs): OpenAI-
+# compatible endpoints (Groq, Cerebras, Gemini, OpenRouter, Mistral, GitHub
+# Models, Hugging Face, OpenAI, …) and the Anthropic Messages API. Keys come
+# from the environment or <home>/keys/<provider>; free tiers are tried first
+# (core/brain.lua). Failover to a local brain is a Lua decision.
+remote = ["dep:ureq"]
+
+# Use macOS's on-device language model (FoundationModels, macOS 26+ with Apple
+# Intelligence on) as the decision brain. build.rs compiles a small Swift bridge
+# (src/apple/bridge.swift; needs Xcode or the Command Line Tools). The framework
+# is weak-linked, so the binary still runs on older macOS. No-op elsewhere.
+apple = []
 
 # GPU backends (build-time; see docs/ROADMAP.md "GPU"). Each implies `llm`.
 #   - gpu-metal: macOS (present on every Mac; CPU fallback via n_gpu_layers=0)

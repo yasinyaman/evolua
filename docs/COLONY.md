@@ -10,8 +10,9 @@ supervisor thread, which is the single deliberate exception (see below).
 ## 1. The colony — communication first
 
 A single seeded `colony` organ gives the organism a sense of **siblings**. It needs no core
-changes; it is seeded once by `main.lua` (idempotent across lives) and is otherwise a normal
-organ subject to mutation and selection.
+changes; it is seeded once by `main.lua` (idempotent across lives) and is a **protected
+singleton**: exempt from culling, never copied by mutation, illumination or the bandit, and
+re-rendered from its blueprint each life so blueprint fixes reach it.
 
 Two behaviors, both via a shared filesystem dir `$EVOLUA_HOME/colony/`:
 
@@ -42,6 +43,15 @@ same two directories over the network.
   deletes it; the receiving nerve drops it into *its* `colony/inbox/<id>/` with a `.net` marker in
   the name, and the organ there drains it into a `colony.message` stimulus. Undeliverable mail stays
   and is retried.
+- **Ledgers.** The colony's two shared ledgers are gossiped on every beacon round (`EVOLUA1 SYNC
+  ledger=<genepool|outcomes> name=<file>` + body): `colony/genepool/<template>` — horizontal gene
+  transfer, the fittest genome per template — and `colony/outcomes/<member>` — the S4 purpose
+  ledger. A file goes to a peer once per modification (the nerve remembers what it shipped where),
+  and copies received from one peer are forwarded to the others, so the whole mesh converges. The
+  receiver applies the organ's own rules: a genome replaces the local entry only if it is *fitter*
+  (equal entries never ping-pong), and a node never lets a remote copy replace its *own* outcome
+  file. The organ reads the two directories exactly as before — HGT adopts alleles evolved on
+  another machine, and the root's purpose bandit learns from payoffs harvested on every host.
 - **Identity.** `main.lua` writes `state/mesh_id` (`id=…`, `gen=…`) at boot; the nerve waits for it.
   Remote peers count toward the colony census (`clone_max_peers` is therefore colony-wide).
 - **Open by design**, like the rest of the organism; `EVOLUA_MESH_TOKEN` adds a shared-secret check
@@ -73,13 +83,19 @@ text.pollinations.ai:443` in gb10's `state/mesh.log`).
 
 Also verified 2026-10-11: a MacBook and a GB10 host joined over Tailscale with one seed each, discovered
 each other within 2 s (`state/mesh.log`: `peer discovered: gb10-node at 100.111.119.48:7707`), and
-exchanged colony pings both ways every 5 ticks for the whole run. Not yet bridged: the gene pool
-(`colony/genepool/`) and purpose outcomes — horizontal gene transfer stays per host for now.
+exchanged colony pings both ways every 5 ticks for the whole run. The ledger gossip was verified
+the same day with two nodes on one host (`--mesh-port 7811 --mesh-seed 127.0.0.1:7812` and the
+reverse): a gene-pool entry planted on A (`fitness 42`) appeared under B's `colony/genepool/`
+within one beacon round, and A's `outcomes/<id>` (a `--goal "report errors"` member) landed in B's
+`colony/outcomes/` (`state/mesh.log`: `sync: genepool/fs_journal received`).
 
 The organ listens on the real clock (`self.heartbeat`) but its template `triggers` field is the
-synthetic `"colony.tick"` (never emitted) — so the evolver's free-drive can **never** grow a
-self-replicator by accident. It only exists because `main.lua` seeds it, or directed mode grows
-it by goal keyword.
+synthetic `"colony.tick"` (never emitted), so the free drive never picks it. The guarantee that
+no drive grows a self-replicator by accident is `Evolver:spawn()`, the one gate every drive
+passes: it refuses a second living colony (protected singleton), the bandit skips protected
+templates, and `--no-colony` puts it in `cfg.disabled_templates`, which spawn refuses for the
+whole life (an old copy on disk isn't even loaded). So the colony exists only because `main.lua`
+seeds it, or directed mode grows the first one by goal keyword.
 
 ### Replication is triply bounded — it can never fork-bomb
 
@@ -89,9 +105,14 @@ it by goal keyword.
 | colony size | `clone_max_peers` | counted from live beacons before each split |
 | cooldown | `colony/clone.lock` | a colony-wide rate limit, checked + acquired atomically-ish |
 
+The three bounds assume one replicator per instance, and that now holds: the colony organ is a
+protected singleton, so no drive can grow a second one (earlier versions let the bandit and
+mutation copy it up to `max_per_template = 3`, and a two-colony run handled every ping twice).
+
 Children are **mortal** (`clone_child_ticks`, then they rest) and only the root divides — a
-star colony, not a tree. The safety caps live in `config.lua` and are **not genes**, so
-mutation can tune the comms/clone *cadences* but never loosen the *bounds*.
+star colony, not a tree. The safety caps live in `config.lua` and are **not genes**, so no gene
+change can loosen the *bounds* (the colony's own genes — its comms/clone cadences — keep their
+seeded values, since protected organs don't mutate).
 
 ## 2. When to split is a decision
 

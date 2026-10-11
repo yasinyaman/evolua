@@ -78,12 +78,13 @@ end
 local function disk_free_mb(path)
   if P.os == "windows" then
     local out = P.run(string.format(
-      [[powershell -NoProfile -Command "(Get-Item '%s').PSDrive.Free" 2>nul]], path))
+      [[powershell -NoProfile -Command "(Get-Item -LiteralPath '%s').PSDrive.Free" 2>nul]],
+      (tostring(path):gsub("'", "''"))))
     local b = tonumber(out:match("%d+"))
     return b and math.floor(b / 1048576) or nil
   else
     -- df -Pk: available KB in 4th column of the data row
-    local out = P.run(string.format("df -Pk '%s' 2>/dev/null | tail -n 1", path))
+    local out = P.run("df -Pk " .. P.shq(path) .. " 2>/dev/null | tail -n 1")
     local avail = out:match("%S+%s+%d+%s+%d+%s+(%d+)")
     return avail and math.floor(tonumber(avail) / 1024) or nil
   end

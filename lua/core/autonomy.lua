@@ -4,7 +4,8 @@
 -- audited; anything destructive or low-confidence is routed to a file-based
 -- approval inbox instead of being executed. See docs/ROADMAP.md §"Otonomi".
 
-local P = require("core.platform")
+local P   = require("core.platform")
+local Log = require("core.log")
 
 local Autonomy = {}
 Autonomy.__index = Autonomy
@@ -19,10 +20,10 @@ function Autonomy.new(ctx)
   for _, v in ipairs(ctx.cfg.safe_actions or { "throttle", "notify" }) do self.safe[v] = true end
   self.audit_path = ctx.cfg.state_dir .. "/audit.log"
   self.last_proposed = {}  -- (entity|verb) -> tick, to suppress duplicate suggestions
-  self.inbox = ctx.cfg.state_dir:gsub("/state$", "") .. "/approvals"
   -- approvals/ lives next to state/ under the data home; ensure subdirs exist
   self.inbox = (ctx.cfg.approvals_dir) or (ctx.cfg.reports_dir:gsub("/reports$", "") .. "/approvals")
-  os.execute('mkdir -p "' .. self.inbox .. '/approved" "' .. self.inbox .. '/done" 2>/dev/null')
+  P.mkdir_p(self.inbox .. "/approved")
+  P.mkdir_p(self.inbox .. "/done")
   self.traces = {}   -- outcome-credit eligibility traces (#6): {organ, entity, baseline, born}
   -- evolved rule organs emit action.request; route them through the ladder (above)
   ctx.bus:subscribe("action.request", function(ev) self:request(ev.data); return { handled = true } end, "autonomy")
@@ -30,8 +31,7 @@ function Autonomy.new(ctx)
 end
 
 function Autonomy:audit(line)
-  local fh = io.open(self.audit_path, "a")
-  if fh then fh:write(os.date("%Y-%m-%d %H:%M:%S "), line, "\n"); fh:close() end
+  Log.append(self.audit_path, os.date("%Y-%m-%d %H:%M:%S ") .. line .. "\n", self.ctx.cfg.log_max_bytes)
 end
 
 -- decide the effective level for a decision and carry it out.
@@ -136,6 +136,12 @@ function Autonomy:_propose(d)
     fh:write(string.format("URL: %s\n", act.url or ""))
     fh:write(string.format("SHA: %s\n", act.sha or ""))
   end
+  -- model_adopt: the brain to switch to, one field per line
+  if act.verb == "model_adopt" and act.spec then
+    for _, k in ipairs({ "kind", "path", "url", "api", "model", "name", "params_b" }) do
+      if act.spec[k] ~= nil then fh:write(string.format("SPEC_%s: %s\n", k:upper(), tostring(act.spec[k]))) end
+    end
+  end
   fh:write("\n> To APPROVE, move this file into `approved/`. To REJECT, delete it.\n")
   fh:close()
   self:audit("PROPOSED " .. id .. " verb=" .. tostring(act.verb))
@@ -154,35 +160,45 @@ function Autonomy:_enact(act, how)
     P.notify("EvoLua", act.desc or "")
   elseif act.verb == "model_downgrade" then
     -- switching to a model we already have is safe & immediate
-    if self.ctx.modelmgr then
-      if act.path then self.ctx.modelmgr:activate(act.path, act.tier, act.tier_name)
-      else self.ctx.modelmgr:set_index(act.tier) end
-    end
+    if self.ctx.modelmgr then self.ctx.modelmgr:set_index(act.tier) end
   elseif act.verb == "model_upgrade" then
     -- real acquisition via the Rust model_acquire binding; bounded to the
-    -- ladder's pinned url+sha. Absent binding/url → no-op + note.
+    -- ladder's pinned url+sha. Absent binding/url → no-op + note. A failure is
+    -- recorded so the model manager backs off instead of re-fetching ~500 MB at
+    -- every check.
+    local mm = self.ctx.modelmgr
     local acquire = rawget(_G, "model_acquire")
     if acquire and act.url and act.file then
-      local dest = (self.ctx.modelmgr and self.ctx.modelmgr.models_dir or ".") .. "/" .. act.file
+      local dest = (mm and mm.models_dir or ".") .. "/" .. act.file
       self:audit(string.format("model_upgrade: fetching %s (%dMB) → %s",
         act.tier_name or "?", act.approx_mb or 0, dest))
       local pok, got = pcall(acquire, act.url, dest, act.sha)
       if pok and got then
-        -- hot-swap the brain NOW (llm_load) and remember it for the next life;
-        -- clear the bottleneck samples so we re-judge the new model fresh instead
-        -- of re-downloading on the next check.
-        local live = self.ctx.modelmgr and self.ctx.modelmgr:activate(dest, act.tier, act.tier_name)
-        local c = self.ctx.memory.data.counters
-        if c then c.llm_ok = 0; c.llm_fallback = 0 end
+        -- switch to it now (fresh samples, judged and rollback-able like any switch)
+        local switched, info = false, nil
+        if mm then switched, info = mm:acquired(act, dest) end
         self:audit(string.format("model_upgrade: ACQUIRED %s — %s", act.tier_name or "?",
-          live and "active now" or "active next life"))
+          switched and "now the decision brain" or ("will load next life (" .. tostring(info) .. ")")))
       else
-        self:audit(string.format("model_upgrade: acquisition FAILED for %s (%s)",
-          act.tier_name or "?", tostring(got)))
+        local why = pok and "download or checksum failed" or tostring(got)
+        if mm and act.tier then mm:record_failure(act.tier, why) end
+        self:audit(string.format("model_upgrade: acquisition FAILED for %s (%s)", act.tier_name or "?", why))
       end
     else
+      -- nothing to retry with in this life (no binding / no pinned url)
+      if mm and act.tier then mm.locked[act.tier] = "no acquire binding/url" end
       self:audit("model_upgrade skipped: no acquire binding/url (build with --features acquire)")
     end
+  elseif act.verb == "model_adopt" then
+    -- a brain already on this machine (core/brain.lua candidate): no download
+    local ok, res = false, "no model manager"
+    if self.ctx.modelmgr and act.spec then ok, res = self.ctx.modelmgr:adopt(act.spec) end
+    self:audit(string.format("model_adopt: %s %s (%s)", ok and "switched to" or "could not switch to",
+      tostring(act.tier_name), ok and tostring(res.id) or tostring(res)))
+  elseif act.verb == "model_rollback" then
+    local ok, what = false, "no model manager"
+    if self.ctx.modelmgr then ok, what = self.ctx.modelmgr:rollback() end
+    self:audit(string.format("model_rollback: %s (%s)", ok and "DONE — active next life" or "skipped", tostring(what)))
   end
   self:audit(string.format("ENACTED(%s) %s target=%s", how or "?", act.verb,
     tostring(act.target_pid or act.tier_name or "-")))
@@ -223,6 +239,12 @@ function Autonomy:poll_approvals()
             act.tier_name, act.file = field("TIER_NAME"), field("FILE")
             act.approx_mb = tonumber(field("APPROX_MB")) or 0
             act.url, act.sha = field("URL"), field("SHA")
+          end
+          if verb == "model_adopt" then
+            local spec = {}
+            for k, v in txt:gmatch("SPEC_([%u_]+):%s*([^\n\r]+)") do spec[k:lower()] = v:gsub("%s+$", "") end
+            spec.params_b = tonumber(spec.params_b)
+            if spec.kind then act.spec, act.tier_name = spec, spec.name end
           end
           self:_enact(act, "approved")
         end

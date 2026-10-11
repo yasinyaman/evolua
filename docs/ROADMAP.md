@@ -16,16 +16,23 @@ progress and the file list, see `docs/BUILD-PLAN.md`. Summary:
 - **Evolution engine enrichment** — honest fitness, MAP-Elites quality-diversity, rule-DSL/GP,
   self-adaptive ES, vertical + horizontal gene transfer, bandit template selection, and
   safety-gated actuators with outcome-credit (the section below).
-- **Rust side** (`main.rs`, `supervisor.rs`, `llm.rs`, `remote.rs`, `acquire.rs`) written to the proven
-  mlua pattern and built/tested with a native `cargo build`.
-- **Brain sourcing (2026-10)** — the binary carries no model (~6 MB): online services first (free tiers,
-  keyless fallback, keys via env or `keys/<provider>` files), then a GGUF found on the host, then a
-  download sized to the RAM, then rules — with online↔local **failover** (backoff + probe) for life.
+- **Rust side** (`main.rs`, `supervisor.rs`, `brain.rs`, `discover.rs`, `service.rs`, `apple.rs`,
+  `llm.rs`, `remote.rs`, `acquire.rs`, `mesh.rs`, `netproxy.rs`, `host.rs`) written to the proven
+  mlua pattern and built/tested with a native `cargo build`; unit tests in Lua (`tests/run.lua`)
+  and Rust, the bounded suite in `scripts/fulltest.sh`, CI on Ubuntu + macOS.
+- **Brain sourcing (2026-10)** — the binary carries no model (~6 MB). `core/brain.lua` picks, per
+  life: explicit → an online service with a key (free tiers first, keys via env or `keys/<provider>`)
+  → the biggest usable brain already on the machine (GGUFs, a local LLM server, the macOS on-device
+  model) → the keyless public endpoint → the default (downloaded / embedded) → rules — with
+  online↔local **failover** (backoff + probe) for life, probation + speed checks + rollback for
+  every switch, and a pinned Qwen2.5-Coder download ladder sized to the host.
 - **Synthesis (2026-10)** — the `synth` organ: the brain writes whole organs from a goal/unhandled
-  stimulus, grounded in real command output, pre-flighted against it, selected by honest fitness +
-  report value, with failures fed back. Templates became the floor.
-- Open items: live verification on a Windows VM, `gpu-dynamic` (`GGML_BACKEND_DL`); a stronger
-  parser pre-flight (column-aware) so 1.5–3B local brains stop mis-parsing padded tables.
+  stimulus, grounded in real command output, dry-run and pre-flighted against it **column by
+  column** (padded tables are the classic small-model trap), selected by honest fitness + report
+  value, with failures fed back. Templates became the floor.
+- **Mesh (2026-10)** — `--mesh` bridges the colony across machines: discovery, mail, the gene pool
+  and the purpose ledger; a node can borrow a peer's served model or internet gateway.
+- Open items: live verification on a Windows VM, `gpu-dynamic` (`GGML_BACKEND_DL`).
 
 ## Phase 5 — Colony, supervisor, goal acquisition, exploration *(implemented)*
 
@@ -278,7 +285,16 @@ Descends on: OOM risk, high latency, battery/thermal, or if the larger model's f
   and checksum + disk + power checks pass.
 - **Safety:** disk/RAM check before download; GGUF **checksum/signature verification**; no download on
   battery; bandwidth awareness.
-- **Rollback:** the previous model is kept; if the new one fails to load or is low-fitness, **revert**.
+- **Rollback:** `acquire` keeps the previous model as `<name>.prev`. Once the upgraded brain has
+  `model_min_samples` decisions, a higher rule-fallback rate than before the upgrade proposes
+  `model_rollback` (safe-listed; also accepted from the approval inbox), which restores `.prev`
+  and backs off the rolled-back tier. A failed download is locked for the life and retried with
+  exponential back-off across lives. A switched-to brain that doesn't load in a later life is
+  noticed at boot (`ModelMgr:on_boot`), backed off and replaced by the previous choice.
+- **Use what's already there:** the default brain (embedded / downloaded) never changes, but a
+  bigger usable brain already on the machine (a GGUF another tool fetched, a running local LLM
+  server, macOS's on-device model) is used instead — on probation, and stepped down if too slow.
+  Before downloading, the ladder proposes `model_adopt`. See README "Decision brain".
 - **Audit log:** every model change (tier, reason, confidence) is logged.
 
 ### GPU: "GPU if present, else CPU" — three scenarios by backend
