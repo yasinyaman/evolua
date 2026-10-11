@@ -11,12 +11,62 @@ function Reporter.new(ctx)
   return setmetatable({ ctx = ctx, buf = {}, n = 0 }, Reporter)
 end
 
+-- INFORMATION VALUE of a report: honest fitness pays an organ for handling a stimulus,
+-- but it cannot tell a real finding from "the same line again with other numbers".
+-- Compare each report with the organ's previous one (digits normalised, token Jaccard):
+-- a near-identical shape is noise and costs fitness, so "report something every
+-- cycle" loses to "report when something actually changed" under selection.
+local function shape_tokens(text)
+  local set, n = {}, 0
+  for tok in tostring(text):gsub("%d+", "#"):gmatch("[%w#%.:/_%-]+") do
+    if not set[tok] then set[tok] = true; n = n + 1 end
+  end
+  return set, n
+end
+
+local function similarity(a, b)
+  local sa, na = shape_tokens(a)
+  local sb, nb = shape_tokens(b)
+  if na == 0 or nb == 0 then return 0 end
+  local inter = 0
+  for tok in pairs(sa) do if sb[tok] then inter = inter + 1 end end
+  return inter / (na + nb - inter)
+end
+
 function Reporter:report(category, text)
   self.n = self.n + 1
   table.insert(self.buf, {
     at = os.date("%H:%M:%S"), category = category or "note", text = text or "",
   })
   self.ctx.memory:bump("reports")
+  local cfg, reg = self.ctx.cfg, self.ctx.registry
+  if category and reg and reg.loaded and reg.loaded[category] then     -- only organs are judged
+    self.last = self.last or {}
+    local tick = (self.ctx.kernel and self.ctx.kernel.tick) or 0
+    local prev = self.last[category]
+    -- noise = the same SHAPE again within a few ticks ("new process # at #" every sample).
+    -- The same shape after a quiet spell ("load 3.1 -> 4.9", later "load 4.9 -> 6.3") is a
+    -- real change and is left alone — only the rapid-fire stream is penalised.
+    if prev and (tick - prev.tick) < (cfg.report_stale_ticks or 15) then
+      local sim = similarity(prev.text, text)
+      if sim >= (cfg.report_stale_sim or 0.7) then
+        self.ctx.memory:reward(category, -(cfg.report_stale_penalty or 0.5) * sim)
+        self.ctx.memory:bump("stale_reports")
+        local mem = self.ctx.memory.data
+        mem.stale = mem.stale or {}
+        mem.stale[category] = (mem.stale[category] or 0) + 1          -- per-organ noise ledger
+      end
+    elseif prev then
+      -- a finding after a quiet spell is what "report anomalies" means: the bus can't see
+      -- it (reports aren't stimuli), so the reporter pays the information value itself
+      self.ctx.memory:reward(category, cfg.report_reward or 4.0)
+      self.ctx.memory:bump("valued_reports")
+      local mem = self.ctx.memory.data
+      mem.valued = mem.valued or {}
+      mem.valued[category] = (mem.valued[category] or 0) + 1       -- per-organ findings ledger
+    end
+    self.last[category] = { text = text, tick = tick }
+  end
   if #self.buf >= (self.ctx.cfg.report_flush or 12) then self:write_report("buffer-full") end
 end
 
