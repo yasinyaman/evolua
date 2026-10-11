@@ -42,16 +42,26 @@ encoding_rs = { version = "0.8", optional = true }
 # verifies its checksum. ureq is pure-Rust (rustls TLS); sha2 for integrity.
 ureq = { version = "2", optional = true }
 sha2 = { version = "0.10", optional = true }
+# Online decision brain (OpenAI-compatible / Anthropic). Pure-Rust HTTP + JSON.
+serde_json = { version = "1", optional = true }
 
 [features]
-default = []
-# Embedded LLM decision brain (in-process llama.cpp, CPU).
+# Default = the MINIMUM-SIZE self-sufficient binary: the in-process llama.cpp
+# runtime + the downloader, but NO model bytes. The organism finds a GGUF already
+# on the host (Ollama / LM Studio / HF cache) or downloads one sized to the host.
+# `cargo build --release --no-default-features` gives the rules-only binary.
+default = ["llm", "acquire", "remote"]
+# In-process LLM runtime (llama.cpp, CPU). The brain is late-bound via llm_load.
 llm = ["dep:llama-cpp-2", "dep:encoding_rs"]
-# Bake the tiny model into the binary (expects evolua/models/smol.gguf). Implies `llm`.
+# OPT-IN: bake a tiny model into the binary (expects evolua/models/smol.gguf;
+# adds ~140MB). Only for fully offline hosts with nothing to discover. Implies `llm`.
 embed_smol = ["llm"]
 
 # Faz 4 — runtime model acquisition (download + checksum). Exposes model_acquire.
 acquire = ["dep:ureq", "dep:sha2"]
+# Online LLM services as the brain (OpenAI-compatible endpoints + Anthropic).
+# Exposes llm_remote_set / llm_remote_clear; llm_complete routes to it first.
+remote = ["llm", "dep:ureq", "dep:serde_json"]
 
 # GPU backends (build-time; see docs/ROADMAP.md "GPU"). Each implies `llm`.
 #   - gpu-metal: macOS (present on every Mac; CPU fallback via n_gpu_layers=0)

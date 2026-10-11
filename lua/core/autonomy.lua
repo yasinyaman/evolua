@@ -154,7 +154,10 @@ function Autonomy:_enact(act, how)
     P.notify("EvoLua", act.desc or "")
   elseif act.verb == "model_downgrade" then
     -- switching to a model we already have is safe & immediate
-    if self.ctx.modelmgr then self.ctx.modelmgr:set_index(act.tier) end
+    if self.ctx.modelmgr then
+      if act.path then self.ctx.modelmgr:activate(act.path, act.tier, act.tier_name)
+      else self.ctx.modelmgr:set_index(act.tier) end
+    end
   elseif act.verb == "model_upgrade" then
     -- real acquisition via the Rust model_acquire binding; bounded to the
     -- ladder's pinned url+sha. Absent binding/url → no-op + note.
@@ -165,12 +168,14 @@ function Autonomy:_enact(act, how)
         act.tier_name or "?", act.approx_mb or 0, dest))
       local pok, got = pcall(acquire, act.url, dest, act.sha)
       if pok and got then
-        if self.ctx.modelmgr then self.ctx.modelmgr:set_index(act.tier) end
-        -- new brain in place (loads next life); clear the bottleneck samples so
-        -- we re-judge it fresh instead of re-downloading on the next check.
+        -- hot-swap the brain NOW (llm_load) and remember it for the next life;
+        -- clear the bottleneck samples so we re-judge the new model fresh instead
+        -- of re-downloading on the next check.
+        local live = self.ctx.modelmgr and self.ctx.modelmgr:activate(dest, act.tier, act.tier_name)
         local c = self.ctx.memory.data.counters
         if c then c.llm_ok = 0; c.llm_fallback = 0 end
-        self:audit(string.format("model_upgrade: ACQUIRED %s — active next life", act.tier_name or "?"))
+        self:audit(string.format("model_upgrade: ACQUIRED %s — %s", act.tier_name or "?",
+          live and "active now" or "active next life"))
       else
         self:audit(string.format("model_upgrade: acquisition FAILED for %s (%s)",
           act.tier_name or "?", tostring(got)))

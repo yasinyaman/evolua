@@ -20,9 +20,16 @@ pub fn download(url: &str, dest: &Path, sha256: Option<&str>) -> anyhow::Result<
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let resp = ureq::get(url)
-        .timeout(std::time::Duration::from_secs(600))
-        .call()?;
+    // already here and verified → nothing to fetch (keeps every life from re-pulling GBs)
+    if let (true, Some(expect)) = (dest.exists(), sha256) {
+        if let Ok(got) = sha256_of(dest) {
+            if got.eq_ignore_ascii_case(expect) {
+                return Ok(());
+            }
+        }
+    }
+    let agent = crate::netproxy::agent(std::time::Duration::from_secs(10), std::time::Duration::from_secs(600));
+    let resp = agent.get(url).call()?;
     let mut reader = resp.into_reader();
 
     let tmp = dest.with_extension("part");
@@ -61,4 +68,18 @@ pub fn download(url: &str, dest: &Path, sha256: Option<&str>) -> anyhow::Result<
     }
     std::fs::rename(&tmp, dest)?;
     Ok(())
+}
+
+fn sha256_of(path: &Path) -> anyhow::Result<String> {
+    let mut f = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 1 << 16];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }

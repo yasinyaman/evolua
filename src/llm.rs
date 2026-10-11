@@ -1,12 +1,13 @@
-// src/llm.rs — embedded "decision brain" (llama-cpp-2, CPU).
+// src/llm.rs — the "decision brain" binding (llama-cpp-2, CPU by default).
 //
-// EvoLua embeds only a TINY model whose job is to DECIDE, not to write code
-// (see docs/ROADMAP.md). This module loads a small GGUF and exposes a single
-// one-shot completion call. Heavy generation is left to evolution / RAG / a
-// larger downloaded model (Faz 4).
+// The binary ships NO model by default (minimum size). The brain is LATE-BOUND:
+// the Lua side (core/modelmgr.lua + core/modelfind.lua) decides which GGUF to use —
+// one it finds already on the host (Ollama / LM Studio / HF cache / llama.cpp
+// cache) or one it downloads sized to the host (acquire.rs) — and calls
+// `llm_load(path)`. Until then `llm_complete` returns nil and the reasoner uses
+// rules. `embed_smol` remains an opt-in fallback that bakes a tiny model in.
 //
-// Feature-gated behind `llm`: with the feature off, the binary stays mlua-only
-// and the Lua side gracefully falls back to rule-based reasoning.
+// Feature-gated behind `llm`: with the feature off, the binary stays mlua-only.
 #![cfg(feature = "llm")]
 
 use std::num::NonZeroU32;
@@ -20,26 +21,38 @@ use llama_cpp_2::{
     sampling::LlamaSampler,
 };
 
-// Optional build-time embedded tiny model (the decision brain). Expected at
-// evolua/models/smol.gguf. With `embed_smol` off, the model must be on disk.
+// Optional build-time embedded tiny model. Expected at evolua/models/smol.gguf.
 #[cfg(feature = "embed_smol")]
 const EMBEDDED_GGUF: &[u8] = include_bytes!("../models/smol.gguf");
 #[cfg(feature = "embed_smol")]
 const EMBEDDED_NAME: &str = "smollm2-135m-q4_k_m";
 
+/// Context window. Code synthesis prompts (organ contract + live stimuli + goal)
+/// need more room than the 6-line decision schema; 4096 fits a 1.5B–3B model
+/// comfortably on CPU. Override with $EVOLUA_LLM_CTX.
+pub fn default_ctx() -> u32 {
+    std::env::var("EVOLUA_LLM_CTX")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|n| *n >= 512)
+        .unwrap_or(4096)
+}
+
 pub struct Brain {
     backend: LlamaBackend,
     model: LlamaModel,
     n_ctx: u32,
+    path: PathBuf,
 }
 
 impl Brain {
-    /// Resolve a model and load it. Priority:
+    /// Startup resolution — only EXPLICIT sources, nothing is embedded by default:
     ///   1. $EVOLUA_MODEL (explicit path)
-    ///   2. <home>/models/decision.gguf  (downloaded / user-provided)
-    ///   3. embedded tiny model (feature `embed_smol`)
-    /// Returns None if nothing is available → caller skips the binding and the
-    /// Lua reasoner uses rules only.
+    ///   2. <home>/models/current_model (path the organism activated last life)
+    ///   3. <home>/models/decision.gguf (legacy fixed name)
+    ///   4. embedded tiny model (opt-in feature `embed_smol`)
+    /// Returns None if nothing is available → the Lua model manager will look for
+    /// a model on the host or download one, then `llm_load` it at runtime.
     pub fn resolve(home: &Path, n_ctx: u32) -> Option<Brain> {
         if let Some(p) = std::env::var_os("EVOLUA_MODEL") {
             let p = PathBuf::from(p);
@@ -47,7 +60,16 @@ impl Brain {
                 return Self::load(&p, n_ctx).ok();
             }
         }
-        let on_disk = home.join("models").join("decision.gguf");
+        let models = home.join("models");
+        if let Ok(s) = std::fs::read_to_string(models.join("current_model")) {
+            let p = PathBuf::from(s.trim());
+            if !s.trim().is_empty() && p.exists() {
+                if let Ok(b) = Self::load(&p, n_ctx) {
+                    return Some(b);
+                }
+            }
+        }
+        let on_disk = models.join("decision.gguf");
         if on_disk.exists() {
             return Self::load(&on_disk, n_ctx).ok();
         }
@@ -78,7 +100,8 @@ impl Brain {
         Self::load(&path, n_ctx)
     }
 
-    fn load(path: &Path, n_ctx: u32) -> anyhow::Result<Brain> {
+    /// Load a GGUF from disk. Public so the `llm_load` binding can hot-swap brains.
+    pub fn load(path: &Path, n_ctx: u32) -> anyhow::Result<Brain> {
         if !path.exists() {
             anyhow::bail!("model not found: {}", path.display());
         }
@@ -87,18 +110,27 @@ impl Brain {
             backend.void_logs();
         }
         let model = LlamaModel::load_from_file(&backend, path, &LlamaModelParams::default())?;
-        Ok(Brain { backend, model, n_ctx })
+        Ok(Brain { backend, model, n_ctx, path: path.to_path_buf() })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     /// One-shot completion. `system` + `user` are wrapped in ChatML (SmolLM2 /
     /// Qwen format). Returns the assistant text. Deterministic by default
-    /// (low temperature) — we want stable decisions, not creative prose.
+    /// (low temperature) — we want stable decisions and compilable code.
     pub fn complete(&self, system: &str, user: &str, max_tokens: usize) -> anyhow::Result<String> {
         let prompt = format!(
             "<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n"
         );
 
-        let ctx_params = LlamaContextParams::default().with_n_ctx(NonZeroU32::new(self.n_ctx));
+        // n_batch must cover the whole prompt: llama.cpp hard-aborts the PROCESS
+        // (GGML_ASSERT n_tokens_all <= n_batch) if a single decode exceeds it.
+        let ctx_params = LlamaContextParams::default()
+            .with_n_ctx(NonZeroU32::new(self.n_ctx))
+            .with_n_batch(self.n_ctx)
+            .with_n_ubatch(self.n_ctx.min(512));
         let mut ctx = self.model.new_context(&self.backend, ctx_params)?;
 
         let tokens = self.model.str_to_token(&prompt, AddBos::Always)?;

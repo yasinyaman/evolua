@@ -59,12 +59,37 @@ return {
   outcome_max_reward     = 5,          -- cap on outcome credit per settled action
   curiosity        = 0.3,        -- 0 = passive · 1 = constantly explore the system
 
-  -- model meta-evolution (Faz 4) — size the decision model to the host
+  -- model meta-evolution (Faz 4) — the binary ships NO model; the organism FINDS
+  -- one on the host or FETCHES one sized to the host (core/modelmgr.lua).
+  model_discover      = true,    -- scan Ollama / LM Studio / HF cache / own dirs for a usable GGUF and attach it
+  model_dirs          = {},      -- extra directories to scan for *.gguf (own models dir + cwd/models are implicit)
+  model_path          = nil,     -- explicit GGUF to use (--model <path>); wins over discovery and the ladder
+  model_max_mb        = nil,     -- cap on model size (MB) for both discovery and downloads (nil = sized by RAM only)
   model_unattended    = true,    -- download a better brain WITHOUT approval (bounded to ladder url+sha)
   model_force_upgrade = false,   -- opt-in: always treat the brain as upgradeable (skip bottleneck test)
   model_ignore_battery= false,   -- opt-in: allow acquisition while on battery
   model_check_every   = 50,      -- reconsider the model every N ticks
-  model_headroom      = 0.7,     -- only claim this fraction of available RAM
+  model_headroom      = 0.7,     -- only claim this fraction of AVAILABLE RAM ...
+  -- ONLINE brain (optional): use a hosted LLM instead of / before a local GGUF. A small
+  -- host then needs no RAM for a model at all. Provider or raw OpenAI-compatible URL:
+  --   "openai" | "anthropic" | "openrouter" | "groq" | "ollama" | "https://host/v1"
+  -- The API key is read from the env var named by llm_key_env (never stored here);
+  -- per-provider defaults: OPENAI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY /
+  -- GROQ_API_KEY / EVOLUA_LLM_KEY. CLI: --llm-api --llm-model --llm-key-env.
+  -- "auto" (default) = use the first provider whose key is in the environment, FREE
+  -- tiers first: ollama (local server) → groq → cerebras → gemini → openrouter (free
+  -- model) → mistral → github → huggingface → openai → anthropic. No key → no online
+  -- brain → local discovery as before. nil/false disables online brains entirely.
+  llm_api             = "auto",
+  llm_api_model       = nil,     -- nil = provider default (free-tier model where one exists)
+  llm_key_env         = nil,     -- nil = provider default env var
+  llm_keyless         = true,    -- in auto mode, fall back to the keyless public endpoint when no key exists
+  llm_key_request     = true,    -- no key anywhere → write approvals/api-key-wanted.md (how to get a free one) and
+                                 -- watch <home>/keys/<provider> so a dropped key goes live without a restart
+  llm_remote_budget   = 300,     -- max online calls per life (wallet guard); nil = unlimited
+  llm_remote_only     = true,    -- with an online brain, don't discover/download local models
+  model_ram_floor_frac= 0.5,     -- ... but never budget less than this fraction of TOTAL RAM (mmap'd
+                                 -- weights are evictable; momentary "available" undercounts badly on macOS)
   model_min_samples   = 10,      -- reasoner samples before judging a bottleneck
   model_fallback_rate = 0.4,     -- rule-fallback rate above which the model is "too weak"
 
@@ -87,6 +112,30 @@ return {
   -- stimuli → organ growth → and (via S1–S4) new purposes. Macro complement to the
   -- per-process `curiosity` sensor. Gated by `curiosity` (0 = off).
   explorer          = true,   -- seed the explorer organ
+  -- SYNTHESIS — "think and produce": templates are the FLOOR (minimum competence,
+  -- no model needed); the seeded "synth" organ is the ceiling. When a directed
+  -- goal has no blueprint, or a stimulus starves with no blueprint answering it,
+  -- synth asks the brain (llm_complete) to WRITE a whole new organ file, checks it
+  -- compiles + passes a lint, loads it as plugins/syn_*.lua, and then keeps it
+  -- under the same honest-fitness selection: an organ that earns nothing is
+  -- retired and re-synthesized with that failure as feedback; one that errors is
+  -- repaired (the error goes back to the model). No brain → synth idles.
+  synth             = true,   -- seed the synthesizer organ
+  synth_every       = 40,     -- ticks between synthesis attempts (each blocks the loop for one LLM call)
+  synth_max         = 6,      -- max LLM synthesis calls per life (budget)
+  report_stale_sim    = 0.7,     -- a report this similar (shape, digits ignored) to the organ's previous one is noise…
+  report_stale_ticks  = 15,      -- …but only when it follows the previous one within this many ticks (rapid-fire)
+  report_stale_penalty= 0.5,
+  report_noise_ratio  = 4,       -- a model-written organ is "doing its job" while stale ≤ ratio × valued reports:
+                                 -- a wave detector reports a few times per wave (bounded), a garbage reporter forever
+  report_reward       = 4.0,     -- a report that follows a quiet spell (≥ report_stale_ticks) earns this — a real
+                                 -- finding must outweigh several generations of idle decay (rare-event detectors
+                                 -- report once a minute and were being culled between findings)     -- …and costs this much fitness × similarity (selection kills "same line every cycle")
+  synth_goal_always = true,    -- model attempts the goal even when a template keyword matched (templates = floor)
+  synth_tokens      = 1800,    -- max tokens the model may spend on one organ
+  synth_grace       = 120,    -- ticks a synthesized organ gets before selection may retire it (it must live
+                              -- long enough to SEE a change: at 0.5 s/tick this is only a minute)
+  synth_repairs     = 2,      -- repair attempts per synthesized organ before it is scrapped
   explore_expand    = true,   -- auto-add discovered dirs/logs to perception
   explore_max_watch = 12,     -- cap on auto-added watch targets (bound perception growth)
   explore_net       = true,   -- include network (listening ports) discovery
@@ -157,6 +206,18 @@ return {
   colony_id            = nil,    -- this instance's colony id (root auto-generates; children get --colony-id)
   generation           = 0,      -- this instance's clone depth
   colony_root          = nil,    -- shared colony dir root (defaults to EVOLUA_HOME)
+  -- MESH (multi-host colony, opt-in): a host-side nerve bridges colony/peers + colony/inbox
+  -- across machines — UDP broadcast discovery on the LAN, static seeds for Tailscale/VPN/WAN.
+  -- Env: EVOLUA_MESH=1, EVOLUA_MESH_PORT, EVOLUA_MESH_SEEDS=host:port,…, EVOLUA_MESH_TOKEN (optional).
+  mesh                 = false,
+  mesh_port            = 7707,
+  mesh_seeds           = nil,
+  -- what a node OFFERS and what it may USE across the mesh (all optional):
+  mesh_share_brain     = true,   -- advertise a locally served model endpoint (e.g. an Ollama server) to peers
+  mesh_use_peer_brain  = true,   -- a node without a brain may think through a peer's advertised endpoint
+  mesh_gateway         = false,  -- serve as an internet gateway (CONNECT proxy) for peers (--mesh-gateway)
+  mesh_use_gateway     = true,   -- a node without internet may tunnel its online calls through a peer gateway
+  mesh_force_gateway   = false,  -- testing: use a peer gateway even when this node is online
 
   -- life rhythm
   tick_seconds = 1,          -- wall-clock seconds per tick
@@ -170,6 +231,12 @@ return {
   es_sigma0      = 0.2,      -- ES: initial per-gene mutation step size (self-adapted thereafter)
   es_tau         = 0.3,      -- ES: learning rate of the step size (log-normal sigma mutation)
   max_per_template = 3,      -- carrying capacity: max living variants of one species
+  protected_max    = 1,      -- carrying capacity for PROTECTED (seeded-infrastructure) templates —
+                             -- colony/supervisor/explorer. Protected lineages are cull-exempt, so
+                             -- without their own cap they'd breed up to max_per_template and stay
+                             -- there forever (immortal duplicates burning population slots). 1 =
+                             -- singleton infrastructure; raise to let a mutant challenger coexist
+                             -- (only the fittest copy is immortal — surplus copies compete normally)
   grace_ticks    = 25,       -- newborn protection before it can be culled
   tournament_k   = 3,        -- breeding: k-tournament parent-selection sample size (1 = pure elitism)
   cull_rate      = 0.5,      -- death: scales the probabilistic cull (0 = never die, 1 = aggressive)

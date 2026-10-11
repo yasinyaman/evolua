@@ -20,9 +20,13 @@ use rust_embed::RustEmbed;
 
 #[cfg(feature = "llm")]
 mod llm;
+#[cfg(feature = "llm")]
+mod remote;
 #[cfg(feature = "acquire")]
 mod acquire;
 mod supervisor;
+mod mesh;
+mod netproxy;
 
 #[derive(RustEmbed)]
 #[folder = "lua/"]
@@ -68,6 +72,14 @@ fn run() -> mlua::Result<()> {
     // observes the organism's liveness + vitals and writes them to <state>/vitals
     // for the Lua side to react to. Soft by design — it never steers evolution.
     supervisor::spawn(home.clone());
+    // 2b) MESH (opt-in): the nerve that lets organisms on other hosts find this one and
+    // exchange colony mail — transport only, the colony organ keeps its file protocol.
+    {
+        let argv: Vec<String> = env::args().skip(1).collect();
+        if let Some(mcfg) = mesh::config_from(&argv, &home) {
+            mesh::spawn(home.clone(), mcfg);
+        }
+    }
 
     // 2) Lua VM
     let lua = Lua::new();
@@ -86,26 +98,185 @@ fn run() -> mlua::Result<()> {
     }
     globals.set("arg", arg_tbl)?;
 
-    // 3b) decision brain (Faz 2) — resolve & expose llm_complete(system,user,max?)
-    // If no model resolves (or the feature is off), the global is absent and the
-    // Lua reasoner falls back to rule-based reasoning.
+    // 3b) decision brain (Faz 2) — LATE-BOUND. The bindings always exist when the
+    // `llm` feature is compiled in; the brain slot starts empty unless an explicit
+    // model resolves ($EVOLUA_MODEL / last activated / embedded). The Lua model
+    // manager fills it at runtime via llm_load(path) — with a model it FINDS on the
+    // host or one it DOWNLOADS sized to the host. llm_complete returns nil while the
+    // slot is empty, so the Lua reasoner falls back to rules (and that fallback rate
+    // is exactly the "bottleneck" signal that drives acquisition).
     #[cfg(feature = "llm")]
     {
-        if let Some(brain) = llm::Brain::resolve(&home, 2048) {
-            let f = lua.create_function(
-                move |_, (system, user, max_tokens): (String, String, Option<usize>)| {
-                    match brain.complete(&system, &user, max_tokens.unwrap_or(192)) {
-                        Ok(s) => Ok(Some(s)),
-                        Err(e) => {
-                            eprintln!("llm_complete error: {e}");
-                            Ok(None)
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let n_ctx = llm::default_ctx();
+        let slot: Rc<RefCell<Option<llm::Brain>>> =
+            Rc::new(RefCell::new(llm::Brain::resolve(&home, n_ctx)));
+
+        // ONLINE brain slot: when set, llm_complete goes over HTTP first and falls
+        // back to the in-process brain (or nil → rules) on any failure.
+        let rslot: Rc<RefCell<Option<remote::Remote>>> = Rc::new(RefCell::new(None));
+
+        let s = slot.clone();
+        let r = rslot.clone();
+        let complete = lua.create_function(
+            move |_, (system, user, max_tokens): (String, String, Option<usize>)| {
+                let max = max_tokens.unwrap_or(192);
+                {
+                    let mut rg = r.borrow_mut();
+                    if let Some(rm) = rg.as_mut() {
+                        let was_down = rm.is_down();
+                        match rm.complete_tracked(&system, &user, max, false) {
+                            Ok(out) => return Ok(Some(out)),
+                            Err(e) => {
+                                if !was_down {
+                                    eprintln!("llm_remote error: {e}");
+                                }
+                                if rm.exhausted() {
+                                    eprintln!("llm_remote: budget exhausted — detaching the online brain");
+                                    *rg = None;
+                                }
+                            }
                         }
                     }
-                },
-            )?;
-            globals.set("llm_complete", f)?;
-            globals.set("EVOLUA_HAS_LLM", true)?;
-        }
+                }
+                let guard = s.borrow();
+                let Some(brain) = guard.as_ref() else { return Ok(None) };
+                match brain.complete(&system, &user, max) {
+                    Ok(out) => Ok(Some(out)),
+                    Err(e) => {
+                        eprintln!("llm_complete error: {e}");
+                        Ok(None)
+                    }
+                }
+            },
+        )?;
+        globals.set("llm_complete", complete)?;
+
+        // llm_remote_set(kind, base_url, model, api_key?, budget?) -> bool
+        //   kind = "openai" (any OpenAI-compatible endpoint) | "anthropic"
+        let r = rslot.clone();
+        let rset = lua.create_function(
+            move |_, (kind, base, model, key, budget): (String, String, String, Option<String>, Option<u64>)| {
+                match remote::Remote::new(&kind, &base, &model, key, budget) {
+                    Some(rm) => {
+                        *r.borrow_mut() = Some(rm);
+                        Ok(true)
+                    }
+                    None => Ok(false),
+                }
+            },
+        )?;
+        globals.set("llm_remote_set", rset)?;
+
+        let r = rslot.clone();
+        let rclear = lua.create_function(move |_, ()| {
+            *r.borrow_mut() = None;
+            Ok(())
+        })?;
+        globals.set("llm_remote_clear", rclear)?;
+
+        // llm_remote_status() -> table|nil : { label, calls, fails, down, backoff, last_error }
+        let r = rslot.clone();
+        let rstatus = lua.create_function(move |lua, ()| {
+            let rg = r.borrow();
+            let Some(rm) = rg.as_ref() else { return Ok(None) };
+            let t = lua.create_table()?;
+            t.set("label", rm.label())?;
+            t.set("calls", rm.calls)?;
+            t.set("fails", rm.fails)?;
+            t.set("down", rm.is_down())?;
+            t.set("backoff", rm.backoff_secs)?;
+            t.set("last_error", rm.last_error.clone())?;
+            Ok(Some(t))
+        })?;
+        globals.set("llm_remote_status", rstatus)?;
+
+        // llm_remote_probe() -> bool : one tiny forced call, ignoring the backoff window —
+        // the model manager uses it to notice the service is back (FAILOVER recovery).
+        let r = rslot.clone();
+        let rprobe = lua.create_function(move |_, ()| {
+            let mut rg = r.borrow_mut();
+            let Some(rm) = rg.as_mut() else { return Ok(false) };
+            // a probe the size of a small real request, so a tier that only serves tiny
+            // calls (or a 402 on anything bigger) is not mistaken for "back"
+            Ok(rm.complete_tracked(
+                "You answer in one short sentence.",
+                "Name three Unix commands that show system load, comma separated.",
+                48,
+                true,
+            )
+            .is_ok())
+        })?;
+        globals.set("llm_remote_probe", rprobe)?;
+
+        // llm_load(path) -> bool : (re)load the brain from a GGUF on disk; hot-swap.
+        let s = slot.clone();
+        let load = lua.create_function(move |_, path: String| {
+            // the llama backend is a process-wide singleton: the old brain must be
+            // dropped (freeing it) BEFORE a new one can initialise, or the load fails
+            // with BackendAlreadyInitialized. Keep the old path to roll back on failure.
+            let prev = s.borrow_mut().take().map(|b| b.path().to_path_buf());
+            match llm::Brain::load(std::path::Path::new(&path), n_ctx) {
+                Ok(b) => {
+                    *s.borrow_mut() = Some(b);
+                    Ok(true)
+                }
+                Err(e) => {
+                    eprintln!("llm_load error: {e}");
+                    if let Some(p) = prev {
+                        if let Ok(b) = llm::Brain::load(&p, n_ctx) {
+                            *s.borrow_mut() = Some(b); // rollback: the previous brain is back
+                        }
+                    }
+                    Ok(false)
+                }
+            }
+        })?;
+        globals.set("llm_load", load)?;
+
+        // llm_unload() : drop the brain (free RAM) — e.g. when host capacity drops.
+        let s = slot.clone();
+        let unload = lua.create_function(move |_, ()| {
+            *s.borrow_mut() = None;
+            Ok(())
+        })?;
+        globals.set("llm_unload", unload)?;
+
+        // llm_model() -> label|nil : the active brain — "remote:<model>@<url>" when an
+        // online service is attached, else the path of the in-process GGUF.
+        let s = slot.clone();
+        let r = rslot.clone();
+        let which = lua.create_function(move |_, ()| {
+            // the EFFECTIVE brain: a backed-off online service does not count — then the
+            // local GGUF (if any) is what answers, and the model manager may attach one
+            if let Some(rm) = r.borrow().as_ref() {
+                if !rm.is_down() {
+                    return Ok(Some(rm.label()));
+                }
+            }
+            Ok(s.borrow().as_ref().map(|b| b.path().to_string_lossy().to_string()))
+        })?;
+        globals.set("llm_model", which)?;
+
+        globals.set("EVOLUA_HAS_LLM", true)?;
+        globals.set("EVOLUA_LLM_CTX", n_ctx)?;
+    }
+
+    // 3b-bis) outbound proxy (mesh gateway): net_proxy_set(url) / net_proxy_clear() / net_proxy()
+    {
+        let set = lua.create_function(|_, url: String| {
+            netproxy::set(Some(url));
+            Ok(())
+        })?;
+        globals.set("net_proxy_set", set)?;
+        let clear = lua.create_function(|_, ()| {
+            netproxy::set(None);
+            Ok(())
+        })?;
+        globals.set("net_proxy_clear", clear)?;
+        let get = lua.create_function(|_, ()| Ok(netproxy::get()))?;
+        globals.set("net_proxy", get)?;
     }
 
     // 3c) model acquisition (Faz 4) — expose model_acquire(url, dest, sha256?).

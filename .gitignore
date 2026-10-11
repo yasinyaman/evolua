@@ -12,6 +12,8 @@ models/smol.gguf
 # still be committed.)
 plugins/gen_*.lua
 lua/plugins/gen_*.lua
+plugins/syn_*.lua
+lua/plugins/syn_*.lua
 reports/
 lua/reports/
 state/
@@ -37,3 +39,5 @@ evolua/
 
 # keep intentionally-empty dirs if ever added
 !**/.gitkeep
+keys/
+lua/keys/
