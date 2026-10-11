@@ -1475,7 +1475,24 @@ RULES:
       return (code:gsub("^%s+", ""))
     end
 
+    -- MECHANICAL REPAIRS the organism knows: slips that are the same every time and have one
+    -- fix. A 7B model told three times "write tonumber((s:gsub(...)))" still drops the inner
+    -- parentheses — so the parentheses are added here, and the model's attention is spent on
+    -- the organ's logic instead. Returns the code and how many slips were fixed.
+    local function autofix(code)
+      local n = 0
+      -- tonumber(x:gsub(...)) passes gsub's count as the base → tonumber((x:gsub(...)))
+      code = code:gsub("tonumber%s*%(%s*([%w_%.%[%]]-:gsub%b())%s*%)", function(inner)
+        n = n + 1
+        return "tonumber((" .. inner .. "))"
+      end)
+      return code, n
+    end
+
     local function validate(code, name)
+      local fixed
+      code, fixed = autofix(code)
+      if fixed > 0 then ctx.log:info("✎ [%s] auto-fixed %d tonumber(gsub) slip(s) before the dry run", SELF, fixed) end
       if not code:find("return%s*{") then return nil, "no `return { ... }` spec table" end
       if not code:find("attach%s*=") then return nil, "spec has no attach function" end
       if code:find("%.%.%.") then return nil, "contains `...` — that is a placeholder, not Lua; write the real code" end
