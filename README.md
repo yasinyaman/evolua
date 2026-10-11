@@ -44,8 +44,10 @@ cargo build --release --features gpu-metal              # macOS GPU backend for 
 Lua is statically linked into the binary; otherwise it links only system libraries (glibc
 on Linux, /usr/lib on macOS). For a fully static Linux binary:
 `rustup target add x86_64-unknown-linux-musl && cargo build --release --target x86_64-unknown-linux-musl`
-(needs `musl-tools`). Tagged releases (`v*`) attach prebuilt default-feature binaries for Linux
-x86_64 (static, musl) and macOS (arm64, x86_64) — see `.github/workflows/release.yml`.
+(needs `musl-tools`; add `--no-default-features --features "remote service"` — llama.cpp needs a C++
+compiler musl-tools lacks, so the static binary thinks with online services, local servers or rules).
+Tagged releases (`v*`) attach prebuilt binaries for Linux x86_64 (static, musl, as above) and macOS
+(arm64, x86_64, default features) — see `.github/workflows/release.yml`.
 
 **Run without building** — a stock `lua` (5.3+) runs the organism directly; the host is
 optional:

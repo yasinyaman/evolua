@@ -79,7 +79,10 @@ jobs:
       - name: Tests
         run: cargo test --locked --features "apple service"
 
-  # the Linux release binary is musl-static; prove it still links that way and runs
+  # the Linux release binary is musl-static; prove it still links that way and runs.
+  # llama.cpp (feature `llm`) needs a C++ compiler musl-tools doesn't provide, so the
+  # static binary carries the online + local-server brains and rules, not the in-process
+  # GGUF runtime (the glibc build has everything).
   static:
     name: static linux binary (musl)
     runs-on: ubuntu-latest
@@ -94,7 +97,7 @@ jobs:
       - name: musl toolchain
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Build
-        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl --no-default-features --features "remote service"
       - name: Statically linked and alive
         run: |
           bin=target/x86_64-unknown-linux-musl/release/evolua

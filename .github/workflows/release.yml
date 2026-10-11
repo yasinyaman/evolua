@@ -15,12 +15,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # fully static, no glibc dependency — online + local-server brains and rules; no
+          # in-process GGUF runtime (llama.cpp needs a C++ compiler musl-tools lacks)
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl   # fully static: no glibc dependency
+            target: x86_64-unknown-linux-musl
+            features: --no-default-features --features "remote service"
           - os: macos-latest
             target: aarch64-apple-darwin
+            features: ""
           - os: macos-latest
             target: x86_64-apple-darwin
+            features: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -30,8 +35,8 @@ jobs:
       - name: musl toolchain
         if: contains(matrix.target, 'musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - name: Build (default features — rule-based brain, no model needed)
-        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Build (no model bytes; see the matrix for what each target can think with)
+        run: cargo build --release --locked --target ${{ matrix.target }} ${{ matrix.features }}
       - name: Package
         run: |
           name="evolua-${GITHUB_REF_NAME}-${{ matrix.target }}"
