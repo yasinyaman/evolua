@@ -1,6 +1,6 @@
 # EvoLua — kendini geliştiren bir Lua organizması
 
-[🇬🇧 English](README.md) · 🇹🇷 Türkçe
+[🇬🇧 English](README.md) · 🇹🇷 Türkçe · **site:** [yasinyaman.github.io/evolua](https://yasinyaman.github.io/evolua/)
 
 EvoLua, deneysel ve tamamen bağımsız bir "dijital organizma"dır. Çalıştığı ortamı
 **algılar** (süreç-başına CPU/RAM, OS hata logları, dosya sistemi), varlık-bazlı bir

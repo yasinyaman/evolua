@@ -16,7 +16,10 @@ core. The organism writes those files itself at runtime from genome blueprints. 
 features, prefer a new template/plugin over modifying the kernel.
 
 Docs are in English (`README.md`, `docs/`, `CLAUDE.md`); `README.tr.md` is a Turkish mirror of
-the README. Source code is English too, except the `goal_keywords` lists in `templates.lua`,
+the README. The project site (https://yasinyaman.github.io/evolua/) is `site/index.html` (hand-written
+landing page) plus the READMEs and `docs/*.md` rendered by pandoc — `scripts/build_site.sh` builds it
+into `_site/`, `.github/workflows/pages.yml` publishes it on every push to `main` that touches docs;
+`site/links.lua` rewrites the Markdown cross-links, so keep linking `.md` files as usual. Source code is English too, except the `goal_keywords` lists in `templates.lua`,
 which are intentionally **bilingual TR/EN** (e.g. "hata"/"error" → `error_reporter`): the English
 synonyms feed the reasoner's RAG, the Turkish ones keep Turkish `--goal` directives working —
 don't translate the Turkish away. Keep README.md and README.tr.md in sync when you change either.

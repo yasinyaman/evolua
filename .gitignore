@@ -41,3 +41,6 @@ evolua/
 !**/.gitkeep
 keys/
 lua/keys/
+
+# GitHub Pages build output (scripts/build_site.sh)
+_site/

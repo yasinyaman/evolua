@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="$if(lang)$$lang$$else$en$endif$">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$if(title)$$title$ · $endif$EvoLua</title>
+<meta name="description" content="$if(description)$$description$$else$EvoLua documentation — a self-evolving Lua organism in a single binary.$endif$">
+<meta property="og:title" content="$if(title)$$title$ · $endif$EvoLua">
+<meta property="og:image" content="https://yasinyaman.github.io/evolua/assets/social-preview.png">
+<link rel="icon" href="$root$/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="$root$/style.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="$root$/">Evo<b>Lua</b></a>
+  <nav class="nav">
+    <a href="$root$/readme.html">README</a>
+    <a href="$root$/docs/DEMO.html">Demo</a>
+    <a href="$root$/docs/COLONY.html">Colony</a>
+    <a href="$root$/docs/TRIALS.html">Trials</a>
+    <a href="$root$/docs/ROADMAP.html">Roadmap</a>
+    <a href="https://github.com/yasinyaman/evolua">GitHub</a>
+  </nav>
+</div></header>
+<main class="doc">
+  <div class="crumbs"><a href="$root$/">EvoLua</a> › $if(crumb)$$crumb$$else$docs$endif$ › <a href="https://github.com/yasinyaman/evolua/blob/main/$source$">source on GitHub</a></div>
+$if(toc)$
+  <nav class="toc">$table-of-contents$</nav>
+$endif$
+$body$
+</main>
+<footer><div class="wrap">
+  <span>EvoLua — rendered from <code>$source$</code> by the Pages workflow.</span>
+  <span><a href="$root$/">Home</a> · <a href="https://github.com/yasinyaman/evolua">GitHub</a></span>
+</div></footer>
+</body>
+</html>
