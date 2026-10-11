@@ -1486,13 +1486,27 @@ RULES:
         n = n + 1
         return "tonumber((" .. inner .. "))"
       end)
+      -- table.find / contains / indexOf / includes do not exist in Lua, but what the model
+      -- means by them is unambiguous: the index of a value in an array, or nil. Give it that
+      -- function (as a local, so the sandbox's `table` stays untouched). `next(table.find(…))`
+      -- — the model imagining a returned table — becomes the plain call.
+      local FAKE = { "find", "contains", "indexOf", "includes", "index_of", "has" }
+      local used = false
+      for _, fn in ipairs(FAKE) do
+        local pat = "table%." .. fn .. "%s*(%b())"
+        code = code:gsub("next%s*%(%s*" .. pat .. "%s*%)", function(args) n = n + 1; used = true; return "__array_find" .. args end)
+        code = code:gsub(pat, function(args) n = n + 1; used = true; return "__array_find" .. args end)
+      end
+      if used then
+        code = "local function __array_find(t, x) if type(t) ~= \"table\" then return nil end for i, v in ipairs(t) do if v == x then return i end end return nil end\n" .. code
+      end
       return code, n
     end
 
     local function validate(code, name)
       local fixed
       code, fixed = autofix(code)
-      if fixed > 0 then ctx.log:info("✎ [%s] auto-fixed %d tonumber(gsub) slip(s) before the dry run", SELF, fixed) end
+      if fixed > 0 then ctx.log:info("✎ [%s] auto-fixed %d known slip(s) (tonumber(gsub) / table.find) before the dry run", SELF, fixed) end
       if not code:find("return%s*{") then return nil, "no `return { ... }` spec table" end
       if not code:find("attach%s*=") then return nil, "spec has no attach function" end
       if code:find("%.%.%.") then return nil, "contains `...` — that is a placeholder, not Lua; write the real code" end
