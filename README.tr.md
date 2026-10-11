@@ -24,9 +24,10 @@ Tek kasıtlı istisna, organizmanın vital'lerini gözleyip geri besleyen ince, 
 ## Hızlı başlangıç
 
 ```bash
-cargo build --release                                   # algı + kurallar (LLM yok)
-cargo build --release --features embed_smol             # + gömülü karar beyni
-cargo build --release --features 'embed_smol acquire'   # + runtime model yükseltme
+cargo build --release                                   # varsayılan: ~6 MB, model BAYTI YOK — beyin çalışma
+                                                        # zamanında bulunur/indirilir/çevrimiçi kullanılır
+cargo build --release --no-default-features             # yalnızca kurallar (LLM çalışma zamanı yok)
+cargo build --release --features embed_smol             # + 135M modeli gömülü (yalnızca çevrimdışı hostlar)
 
 ./target/release/evolua --ticks 60 --tick-seconds 0.2        # sınırlı hızlı demo
 ./target/release/evolua --goal "report errors"               # direktifli (Türkçe de kabul)
@@ -42,6 +43,30 @@ lua lua/main.lua --ticks 60 --tick-seconds 0.2
 
 > Saf-Lua modunda veri evini bir global enjekte ederek yönlendir: `lua -e "EVOLUA_HOME='/yol'" lua/main.lua`.
 
+### Beyin nereden gelir (binary küçük kalır)
+
+Binary **model taşımaz**. Organizma doğarken beynini şu sırayla seçer ve yaşamı boyunca
+aralarında **failover** yapar:
+
+1. **Çevrimiçi servis, önce ücretsiz katmanlar** (`--llm-api auto`, varsayılan): ortamda anahtarı
+   bulunan ilk sağlayıcı — `ollama` (yerel sunucu, anahtarsız) → `groq` → `cerebras` → `gemini` →
+   `openrouter` (ücretsiz model) → `mistral` → `github` → `huggingface` — sonra **anahtarsız** açık uç
+   (`pollinations`), sonra ücretli `openai` / `anthropic`. Anahtar alışılmış env değişkeninden
+   (`GROQ_API_KEY`, …) **ya da veri evindeki tek satırlık `keys/<sağlayıcı>` dosyasından** okunur;
+   çalışan organizma dosyayı yeniden başlamadan alır. OpenAI uyumlu herhangi bir URL de olur.
+2. **Hostta zaten bulunan bir GGUF** (`core/modelfind.lua`): Ollama blob deposu, LM Studio, HF
+   önbelleği, llama.cpp önbellekleri, `--model-dir`. RAM bütçesine sığan en büyük coder/instruct kazanır.
+3. **Hosta göre boyutlanmış indirme**: pinli merdiven (Qwen2.5-Coder-Instruct 0.5B → 1.5B → 3B → 7B,
+   url + sha256), otonomi merdiveninden geçer; inince sıcak takılır, bir daha indirilmez.
+4. **Kurallar** — her zaman var.
+
+**Failover:** art arda üç çevrimiçi hata (ağ engeli, kota, kesinti; `401/402/403` hemen) servisi
+geri çekilme penceresine alır; model yöneticisi yerel bir beyin bulur ya da indirir, servis
+yanıt verince geri döner ve yerel modelin RAM'ini bırakır. Hiçbir yerde anahtar yoksa
+`approvals/api-key-wanted.md` yazar (ücretsiz sağlayıcılar, anahtar nereden alınır, nereye
+bırakılır) ve kurallarla / yerel modelle sürer. Hiçbir sağlayıcı bir programın kendi kendine kayıt
+olmasına izin vermez; o adım insanda kalır.
+
 ---
 
 ## Neler yapabilir
@@ -49,10 +74,11 @@ lua lua/main.lua --ticks 60 --tick-seconds 0.2
 | Faz | Yetenek |
 |---|---|
 | **1 · Keskin algı** | süreç-başına CPU/RAM (`proc_top`), OS çökme/hata logları (`proc_errors`), varlık-bazlı **dünya modeli**, kural-tabanlı durum raporları |
-| **2 · Karar beyni** | gömülü minik model (SmolLM2-135M) tüm-sistem snapshot'ını **anlamlandırır**; fitness-ağırlıklı **BM25 RAG** ile öğrenir; model yoksa kurala düşer |
+| **2 · Karar beyni** | bir LLM tüm-sistem snapshot'ını **anlamlandırır** — **çevrimiçi servis (önce ücretsiz, anahtarsız yedek)**, hostta **bulunan** bir GGUF ya da RAM'e göre **indirilen** biri; çevrimiçi↔yerel **failover**; fitness-ağırlıklı **BM25 RAG** ile öğrenir; hiçbiri yoksa kurala düşer |
 | **3 · Otonomi + merak** | **L0–L4 merdiveni**, dosya tabanlı **onay inbox**, güvenli-liste + geri-alınabilirlik + denetim günlüğü, `curiosity` aktif keşif |
-| **4 · Meta-evrim** | host'u ölçer (`hostcaps`), beyin darboğaz + kapasite varsa **model merdiveninde** tırmanır; indirme + checksum + rollback |
-| **5 · Koloni, süpervizör, amaç, keşif** | **kendini çoğaltma**; akıllı **ne zaman bölünmeli** kararı; host-tarafı **süpervizör**; **amaç edinme** (koloni hangi amacın ödül getirdiğini öğrenir); ve **ortam keşfi** (kendi duyularını büyütür) |
+| **4 · Meta-evrim** | host'u ölçer (`hostcaps`), beyin darboğaz + kapasite varsa pinli **model merdiveninde** tırmanır; indirme + checksum + sıcak takma + rollback |
+| **6 · Sentez — organları beyin yazar** | şablonlar yalnızca *taban*: `synth` organı hedefi ya da ele alınmayan uyaranı tek cümlelik teknik brife çevirir, **gerçek komutları çalıştırıp** çıktısını modele gösterir, modele yepyeni bir organ yazdırır, ayrıştırıcıyı o gerçek satırlara karşı **ön kontrolden** geçirir, kurar; dürüst fitness + rapor değeri seçer, başarısızlıklar bir sonraki denemeye ders olur |
+| **5 · Koloni, süpervizör, amaç, keşif** | **kendini çoğaltma** — `--mesh` ile **makineler arası** da (LAN keşfi, Tailscale/WAN için seed); akıllı **ne zaman bölünmeli** kararı; host-tarafı **süpervizör**; **amaç edinme** (koloni hangi amacın ödül getirdiğini öğrenir); ve **ortam keşfi** (kendi duyularını büyütür) |
 
 Faz 1–4 özgün organizma; **Faz 5** derinlemesine [docs/COLONY.md](docs/COLONY.md)'de.
 
@@ -128,7 +154,7 @@ değil — gerçek bir genetik sistem. (Tasarım + doğrulama: [docs/ROADMAP.md]
 | Mekanizma | Ne yapar |
 |---|---|
 | **Dürüst fitness** | ödül, organın *beyan ettiği* sayıdan değil *gözlemlenebilir bus olgularından* türetilir — aç bir uyaranı doldurma (sürpriz) ÷ ortak-işleyenler (fazlalık paylaşımı) − ölçülen maliyet. Reward-hacking'i kırar (örn. koloninin her heartbeat'te kendine ödül basması). |
-| **Turnuva + yumuşak ölüm** | k-turnuva üreme (yalnız en fit değil) + olasılıksal eleme çeşitliliği korur; tohumlanan altyapı soyları (colony/supervisor/explorer) elemeden muaf. |
+| **Turnuva + yumuşak ölüm** | k-turnuva üreme (yalnız en fit değil) + olasılıksal eleme çeşitliliği korur; tohumlanan altyapı soyları (colony/supervisor/explorer) asla tükenmez — en fit kopyaları elemeden muaf — ama `protected_max` (varsayılan 1) ile sınırlıdır, böylece popülasyonu ölümsüz kopyalarla dolduramazlar. |
 | **Rule-DSL / genetik programlama** | bir `rule` organının genomu tipli kural listesidir — `when <stimulus> if <field> <op> <value> then <report\|log\|emit\|act>`. Mutasyon yapıyı yeniden yazar, crossover iki ebeveyni birleştirir. Gramer **yalnız güvenli primitifler** üretir (`os`/`io` yok) → yapısal **capability-isolation**. |
 | **Quality-Diversity (MAP-Elites)** | davranış arşivi her niş için en iyi organı tutar (birincil uyaran × abonelik genişliği); hücre elitleri korunur, üreme boş nişleri *aydınlatır* — tek tepe yerine **yetkinler repertuarı**. |
 | **Öz-uyarlanan (ES) mutasyon** | her sayısal gen kendi log-normal mute edilen adım boyunu (`sigma`) taşır, nesiller boyu kalıtılır. |
@@ -156,13 +182,14 @@ bir organ olamazlar). Kural grameri ise `templates.lua`'da (blueprint katmanı) 
 |---|---|
 | `src/main.rs` | tek-binary host |
 | `src/supervisor.rs` | host-tarafı otonom gözcü ("beyin sapı") |
-| `src/llm.rs` · `src/acquire.rs` | gömülü karar beyni · model indirme |
+| `src/mesh.rs` · `src/netproxy.rs` | host-tarafı **mesh** siniri (opt-in): UDP/seed keşfi + TCP posta, beacon'da yetenekler (beyin, sunulan model, internet, ağ geçidi) · eş ağ geçidine yönlendirilen çıkış proxy'si |
+| `src/llm.rs` · `src/remote.rs` · `src/acquire.rs` | yerel beyin (sıcak takılır) · çevrimiçi beyin (OpenAI uyumlu + Anthropic, bütçe, geri çekilme, yoklama) · model indirme |
 | `lua/core/kernel.lua` | yaşam döngüsü / tick loop; ödül-ceza → fitness |
 | `lua/core/bus.lua` | event bus — sinir sistemi |
-| `lua/core/templates.lua` | **genom blueprint'leri**; **rule-DSL/GP** organı + `colony`, `supervisor`, `explorer` |
+| `lua/core/templates.lua` | **genom blueprint'leri**; **rule-DSL/GP** organı + `colony`, `supervisor`, `explorer`, `synth` (model-yazımı organ döngüsü) |
 | `lua/core/evolver.lua` | evrim motoru: ihtiyaç/hedef/**bandit** üretim, **turnuva** + yumuşak ölüm, **MAP-Elites**, **ES** mutasyon, **crossover** |
 | `lua/core/evo_util.lua` | paylaşılan evrim operatörleri (gauss + öz-uyarlanan ES adımı) |
-| `lua/core/{worldmodel,reasoner,rag,autonomy,hostcaps,modelmgr,platform,reporter}.lua` | dünya modeli · anlamlandırma · RAG · otonomi · host probu · model merdiveni · OS soyutlaması · raporlayıcı |
+| `lua/core/{worldmodel,reasoner,rag,autonomy,hostcaps,modelmgr,modelfind,platform,reporter}.lua` | dünya modeli · anlamlandırma · RAG · otonomi · host probu · beyin yönetimi (failover, anahtar, merdiven) · hosttaki GGUF keşfi · OS soyutlaması · raporlayıcı (rapor değeri) |
 | `lua/sensors/*.lua` | `sys_metrics`, `logwatch`, `fswatch`, `introspect`, `proc_top`, `proc_errors`, `curiosity` |
 | `lua/config.lua` · `lua/main.lua` | içgüdüler (sayılar) · giriş noktası/CLI/tohumlama |
 
@@ -180,13 +207,14 @@ bir organ olamazlar). Kural grameri ise `templates.lua`'da (blueprint katmanı) 
 ## Veri evi düzeni (`$EVOLUA_HOME`)
 
 ```
-plugins/    organizmanın yazdığı organlar (gen_*.lua)
+plugins/    organizmanın yazdığı organlar (şablondan gen_*.lua, beyinden syn_*.lua)
 reports/    zaman damgalı Markdown raporlar
 state/      memory.lua · evolua.log · audit.log · heartbeat · vitals · supervisor.log
             evolution.log (jenerasyon metrikleri) · repertoire.txt (MAP-Elites QD haritası)
-approvals/  pending-*.md → (sen) approved/ → done/
-models/     indirilen modeller + current_tier
-colony/     peers/<id> · inbox/<id>/ · clone.lock · genepool/ (yatay gen transferi)
+approvals/  pending-*.md → (sen) approved/ → done/ · api-key-wanted.md (çevrimiçi beyin için anahtar isteği)
+keys/       <sağlayıcı> — tek satırlık API anahtarı dosyaları, canlı alınır
+models/     indirilen modeller · current_model · current_tier
+colony/     peers/<id> (uzak host için addr=) · inbox/<id>/ · clone.lock · genepool/ (yatay gen transferi)
             children/<id>/ (klon alt-evleri; inherited.lua = dikey gen transferi)
             lineage.log (amaç defteri) · outcomes/<id> (S4 ödül hasadı)
 ```
@@ -210,9 +238,17 @@ colony/     peers/<id> · inbox/<id>/ · clone.lock · genepool/ (yatay gen tran
 --clone-generalist         klonlar generic kopya (amaç kristalleşmesini atla)
 --purpose-mode <m>         amaç seçimi: explore|exploit|portfolio
 --no-purpose-learn         S4'ü kapat (amaçları ödüle göre yanlamayı bırak)
---no-colony / --no-supervisor / --no-explorer / --no-rule   ilgili organı tohumlama
+--mesh / --mesh-seed <host:port> / --mesh-port <n> / --mesh-gateway   başka hostlardaki organizmalara katıl; beyni olmayan düğüm eşin modelini, interneti olmayan düğüm eşin ağ geçidini kullanır (docs/COLONY.md)
+--no-colony / --no-supervisor / --no-explorer / --no-rule / --no-synth   ilgili organı tohumlama
 --explore-root <path>      explorer'ın dolaşacağı bir dizin ekle (tekrarlanabilir)
+
+--llm-api <auto|sağlayıcı|url>  çevrimiçi beyin (varsayılan auto = önce ücretsizler)
+--llm-model <ad> · --llm-key-env <VAR> · --llm-budget <n>
+--no-llm-api / --no-llm-keyless   hiç çevrimiçi olma / anahtarsız açık ucu atla
+--model <yol.gguf> · --model-dir <yol> · --model-max-mb <n> · --no-model-discover · --model-force-upgrade
 ```
+
+Beyin env: `EVOLUA_LLM_API`, `EVOLUA_LLM_MODEL`, `EVOLUA_LLM_BASE`, `EVOLUA_LLM_CTX` (yerel bağlam, 4096), `EVOLUA_MODEL`.
 
 Süpervizör env: `EVOLUA_WATCHDOG` (0=kapalı), `_SECS`, `_STALL`, `_KILL` (opt-in son-çare çıkış).
 
@@ -282,5 +318,6 @@ tüketimi veya diğer sonuçlardan **sorumlu değildir**.
 - [docs/DEMO.tr.md](docs/DEMO.tr.md) — gerçek bir koşunun açıklamalı çıktısı (inceleyenler için)
 - [docs/COLONY.md](docs/COLONY.md) — Faz 5 derinlemesine
 - [docs/TESTING.md](docs/TESTING.md) — doğrulama suite'i
+- [docs/TRIALS.md](docs/TRIALS.md) — **beynin organ yazarak çözmesi gereken beş görev** (disk, portlar, docker, günlük, oturumlar), GB10 üzerinde: ne yazdı, neyi yakaladı, seçilim ne yaptı
 - [docs/ROADMAP.md](docs/ROADMAP.md) · [docs/BUILD-PLAN.md](docs/BUILD-PLAN.md) — tasarım gerekçeleri · build planı
 - [CLAUDE.md](CLAUDE.md) — AI asistanları için rehber

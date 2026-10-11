@@ -16,9 +16,16 @@ progress and the file list, see `docs/BUILD-PLAN.md`. Summary:
 - **Evolution engine enrichment** — honest fitness, MAP-Elites quality-diversity, rule-DSL/GP,
   self-adaptive ES, vertical + horizontal gene transfer, bandit template selection, and
   safety-gated actuators with outcome-credit (the section below).
-- **Rust side** (`main.rs`, `supervisor.rs`, `llm.rs`, `acquire.rs`) written to the proven mlua
-  pattern and built/tested with a native `cargo build`.
-- Open items: live verification on a Windows VM, `gpu-dynamic` (`GGML_BACKEND_DL`).
+- **Rust side** (`main.rs`, `supervisor.rs`, `llm.rs`, `remote.rs`, `acquire.rs`) written to the proven
+  mlua pattern and built/tested with a native `cargo build`.
+- **Brain sourcing (2026-10)** — the binary carries no model (~6 MB): online services first (free tiers,
+  keyless fallback, keys via env or `keys/<provider>` files), then a GGUF found on the host, then a
+  download sized to the RAM, then rules — with online↔local **failover** (backoff + probe) for life.
+- **Synthesis (2026-10)** — the `synth` organ: the brain writes whole organs from a goal/unhandled
+  stimulus, grounded in real command output, pre-flighted against it, selected by honest fitness +
+  report value, with failures fed back. Templates became the floor.
+- Open items: live verification on a Windows VM, `gpu-dynamic` (`GGML_BACKEND_DL`); a stronger
+  parser pre-flight (column-aware) so 1.5–3B local brains stop mis-parsing padded tables.
 
 ## Phase 5 — Colony, supervisor, goal acquisition, exploration *(implemented)*
 
@@ -79,7 +86,8 @@ Full design and diagrams: **`docs/COLONY.md`**. Verification: **`docs/TESTING.md
 
 **Selection & investment**
 - **Tournament selection + soft probabilistic death** — replaces elitist rank-1 breeding and
-  single-worst culling; seeded-infrastructure lineages (colony/supervisor/explorer) are protected.
+  single-worst culling; seeded-infrastructure lineages (colony/supervisor/explorer) are protected
+  (one immortal keeper per template, capped at `protected_max` so protection can't leak population).
 - **Bandit template selection** — a UCB bandit over templates (reward = average fitness,
   optimistic prior) invests reproduction where it pays and tries each template once.
 

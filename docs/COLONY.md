@@ -23,6 +23,59 @@ Two behaviors, both via a shared filesystem dir `$EVOLUA_HOME/colony/`:
   program with `EVOLUA_HOME` pointed at a sub-home under `colony/children/<id>/` and a shared
   `--colony-root`.
 
+### Across hosts — the mesh (opt-in, `--mesh`)
+
+The file dance above lives inside one data home, so by itself a colony is one machine. The
+**mesh** extends it across machines without touching the organ: a small host-side thread
+(`src/mesh.rs`, a sibling of the supervisor "brainstem" — transport, not behaviour) bridges the
+same two directories over the network.
+
+- **Discovery.** Every few seconds the nerve sends a beacon (`EVOLUA1 BEACON id=… gen=… tcp=… host=…`)
+  by UDP broadcast on the LAN **and** by TCP to every `--mesh-seed host:port` — the seeds are how
+  nodes find each other across links broadcast cannot cross (Tailscale, VPN, WAN). A received
+  beacon is written as `colony/peers/<id>` with an extra `addr=ip:port`, refreshed on every beacon,
+  so the organ's own `peer_ttl` census treats the remote node exactly like a local sibling. Once two
+  nodes have heard each other they beacon to each other directly, so one seed in either direction
+  is enough to join.
+- **Mail.** The organ writes a ping (or any message) into `colony/inbox/<peer>/` as always. If that
+  peer's beacon carries `addr=`, the nerve ships the file over TCP (`EVOLUA1 MSG to=<id>` + body) and
+  deletes it; the receiving nerve drops it into *its* `colony/inbox/<id>/` with a `.net` marker in
+  the name, and the organ there drains it into a `colony.message` stimulus. Undeliverable mail stays
+  and is retried.
+- **Identity.** `main.lua` writes `state/mesh_id` (`id=…`, `gen=…`) at boot; the nerve waits for it.
+  Remote peers count toward the colony census (`clone_max_peers` is therefore colony-wide).
+- **Open by design**, like the rest of the organism; `EVOLUA_MESH_TOKEN` adds a shared-secret check
+  on beacons and mail when an operator wants one. Env equivalents: `EVOLUA_MESH=1`,
+  `EVOLUA_MESH_PORT`, `EVOLUA_MESH_SEEDS=host:port,…`, `EVOLUA_MESH_BEACON_SECS`.
+
+**Capabilities travel in the beacon** — and that is what lets a mesh *specialise*. Every node
+writes `state/mesh_caps` (the model manager keeps it current: `brain=…`, `online=0|1`, and — when
+its brain is a model *served on that host*, e.g. an Ollama server on `localhost` — `llm_port=`,
+`llm_path=`, `llm_model=`); the nerve appends those fields to its beacon, and a node that serves as
+a gateway adds `gateway=<port>`. Peers' fields land in `colony/peers/<id>`. Two optional roles
+follow, both decided by the model manager on its check cadence and both audited:
+
+- **Model machine.** A node with no brain of its own (no key, no GGUF that fits, `--no-llm-api`)
+  finds a peer advertising `llm_port=` and attaches `http://<peer>:<port><path>` as its online
+  brain (`mesh_use_peer_brain`; the offering side controls it with `mesh_share_brain`). The usual
+  failover applies: if the peer vanishes the calls back off and the local ladder resumes.
+- **Internet gateway.** A node started with `--mesh-gateway` runs a small HTTP CONNECT proxy on
+  port+1 and advertises it. A node whose own internet probe fails (`mesh_use_gateway`) picks an
+  online peer with `gateway=` and routes its outbound HTTPS — online brain calls *and* model
+  downloads — through it (`net_proxy_set` in the host); it drops the tunnel when its own internet
+  is back.
+
+Verified 2026-10-11 over Tailscale: a Mac started with `--no-llm-api --no-model-discover` (no brain
+at all) attached gb10's Ollama within one check cadence — `brain online: qwen2.5:7b-instruct-q8_0
+via peer:gb10-node [borrowed from mesh peer gb10-node]` — and produced valid reasoner decisions; a
+Mac forced onto the gateway tunnelled its calls through gb10 (`gateway: tunnel to
+text.pollinations.ai:443` in gb10's `state/mesh.log`).
+
+Also verified 2026-10-11: a MacBook and a GB10 host joined over Tailscale with one seed each, discovered
+each other within 2 s (`state/mesh.log`: `peer discovered: gb10-node at 100.111.119.48:7707`), and
+exchanged colony pings both ways every 5 ticks for the whole run. Not yet bridged: the gene pool
+(`colony/genepool/`) and purpose outcomes — horizontal gene transfer stays per host for now.
+
 The organ listens on the real clock (`self.heartbeat`) but its template `triggers` field is the
 synthetic `"colony.tick"` (never emitted) — so the evolver's free-drive can **never** grow a
 self-replicator by accident. It only exists because `main.lua` seeds it, or directed mode grows
@@ -263,8 +316,8 @@ flowchart LR
 
 ```
 $EVOLUA_HOME/colony/
-  peers/<id>            presence beacons (id, gen, tick, organs, time)
-  inbox/<id>/<msg>      per-recipient mailboxes (sender id embedded in the message)
+  peers/<id>            presence beacons (id, gen, tick, organs, time; + addr=ip:port when the peer is on another host)
+  inbox/<id>/<msg>      per-recipient mailboxes (sender id embedded in the message; *.net*.msg arrived over the mesh)
   clone.lock            colony-wide replication cooldown
   lineage.log           purpose ledger: <tick> <child-id> gen=<n> purpose: <goal> [why]
   outcomes/<id>         S4 harvest: purpose=<goal> payoff=<n> (one per purpose-directed member)

@@ -37,10 +37,10 @@ This working copy is **not currently a git repository** (`git init` if you need 
 ## Build & run
 
 ```bash
-cargo build --release                                   # Phase 1 + rule-based (NO LLM)
-cargo build --release --features embed_smol             # + embedded decision brain (Phase 2/3)
-cargo build --release --features 'embed_smol acquire'   # + runtime model upgrade (Phase 4)
-cargo build --release --features 'embed_smol gpu-metal' # macOS GPU backend
+cargo build --release                                   # DEFAULT = llm + acquire + remote: ~6 MB, no model bytes
+cargo build --release --no-default-features             # rules-only binary
+cargo build --release --features embed_smol             # + bake SmolLM2-135M in (offline hosts; needs models/smol.gguf)
+cargo build --release --features gpu-metal              # macOS GPU backend for the local brain
 
 ./target/release/evolua --ticks 60 --tick-seconds 0.2   # bounded fast demo
 ./target/release/evolua --goal "report errors"          # directed mode (also accepts Turkish)
@@ -48,11 +48,33 @@ cargo build --release --features 'embed_smol gpu-metal' # macOS GPU backend
 ./target/release/evolua --help                          # all flags
 ```
 
-**Build prerequisite for LLM features:** `embed_smol` does `include_bytes!("../models/smol.gguf")`
-at compile time. That file is **not in the repo** — `models/smol.gguf` must exist or the build
-fails. Plain `cargo build --release` has no such dependency. At runtime the model resolves as:
-`$EVOLUA_MODEL` → `<home>/models/decision.gguf` → embedded. If none resolve, the reasoner
-gracefully falls back to rules.
+**The binary carries no model.** Only opt-in `embed_smol` does `include_bytes!("../models/smol.gguf")`
+(file not in the repo — must exist or that build fails). At runtime the brain is **late-bound**
+(`llm_load`/`llm_unload`/`llm_model` over a `Rc<RefCell<Option<Brain>>>` slot in `src/main.rs`) and
+chosen by `lua/core/modelmgr.lua` in this order, with **failover** for life:
+1. **Online service** (`src/remote.rs`, `--llm-api auto` default): first provider with a key in the
+   env or in `<home>/keys/<provider>`, free tiers first (ollama server → groq → cerebras → gemini →
+   openrouter free → mistral → github → huggingface), then the keyless public endpoint
+   (pollinations), then openai/anthropic. Provider table lives in `main.lua` (`PROVIDERS`), keys never
+   touch config. Budget per life (`llm_remote_budget`). `EVOLUA_LLM_BASE` overrides the base URL (proxies, tests).
+2. **GGUF found on the host** (`lua/core/modelfind.lua`: Ollama manifests/blobs, LM Studio, HF cache,
+   llama.cpp caches, `--model-dir`), best coder/instruct that fits `size×1.25+256 ≤ usable RAM`.
+   RAM budget = max(available × headroom, total × `model_ram_floor_frac`) — mmap'd weights are evictable
+   and macOS "available" undercounts.
+3. **Download sized to the host**: pinned ladder (Qwen2.5-Coder-Instruct 0.5B/1.5B/3B/7B q4_k_m, url+sha256)
+   through the autonomy ladder, hot-swapped in; `acquire.rs` skips a present, verified file.
+4. **Rules.** `$EVOLUA_MODEL` / `--model` still force a specific local file.
+
+**Failover (`ModelMgr:failover`)**: the host marks the online brain *down* after 3 consecutive failures
+(`401/402/403` → long backoff at once, `429` → short) and `llm_complete` skips it instantly while down
+(a blocked network never stalls the tick loop); `llm_model()` then reports the *effective* brain so the
+local ladder runs; `llm_remote_probe()` (a small real-sized call) on the model-check cadence detects
+recovery → back online, local model unloaded (`llm_remote_only`). No key anywhere →
+`approvals/api-key-wanted.md` once per life + live pickup of `keys/<provider>`. Signing up is human.
+
+**Hot-swap gotcha:** the llama backend is a process singleton — the old `Brain` must be dropped before
+loading the next (`BackendAlreadyInitialized` otherwise); `n_batch` must equal `n_ctx` or llama.cpp
+*aborts the process* on a long prompt (`GGML_ASSERT n_tokens_all <= n_batch`).
 
 **LLM decision quality:** the embedded SmolLM2-135M is marginal — it often can't emit the
 reasoner's strict schema and falls back to rules (watch `llm_ok` vs `llm_fallback` in
@@ -61,10 +83,11 @@ reasoner's strict schema and falls back to rules (watch `llm_ok` vs `llm_fallbac
 reasoner prompt (`reasoner.lua` `SCHEMA`) carries a worked example — without it even Qwen echoes
 the option menus instead of choosing, so keep the example if you touch the prompt.
 
-Cargo features map directly to the four phases: `default` (none) = perception + world model +
-rule reasoning + evolution; `llm` = decision-brain infra; `embed_smol` = bakes in SmolLM2-135M
-(implies `llm`); `acquire` = download/checksum a bigger model; `gpu-{metal,cuda,vulkan}` = GPU
-backend (build-time, one per binary). Phase 5 (colony / supervisor / explorer / goal acquisition)
+Cargo features: `default = ["llm", "acquire", "remote"]` (the minimum self-sufficient binary — runtime,
+downloader, online client, no model bytes); `--no-default-features` = perception + world model + rule
+reasoning + evolution only; `llm` = local decision-brain runtime (llama.cpp); `remote` = online brain
+(ureq + serde_json; implies `llm`); `embed_smol` = bakes in SmolLM2-135M (implies `llm`); `acquire` =
+download/checksum; `gpu-{metal,cuda,vulkan}` = GPU backend (build-time, one per binary). Phase 5 (colony / supervisor / explorer / goal acquisition)
 is **not** feature-gated — it's pure Lua plus the always-compiled host supervisor.
 
 ### Run without building (plain Lua)
@@ -119,6 +142,24 @@ never appears and the organ just beats the heartbeat harmlessly. This is the rar
 change touches `src/` — justified because it sits *below* evolution as a safety/observation
 floor, not within it.
 
+### Host-side mesh — organisms on other machines (`src/mesh.rs`, opt-in `--mesh`)
+
+The second deliberate host-side thread, same justification as the brainstem: transport below
+evolution. The colony organ's file protocol (`colony/peers/<id>` beacons, `colony/inbox/<id>/`
+mail) is bridged across hosts — UDP broadcast beacons on the LAN plus TCP beacons to
+`--mesh-seed host:port` (Tailscale/VPN/WAN), remote peers written as beacon files with `addr=`,
+mail for an `addr=` peer shipped over TCP and dropped into the remote inbox (`*.net*.msg`). The
+organ does not know or care which siblings are remote. `main.lua` writes `state/mesh_id` so the
+nerve learns the colony id. Beacons also carry **capabilities** from `state/mesh_caps` (written by
+`ModelMgr:mesh_caps`): `brain=`, `online=`, `llm_port/llm_path/llm_model=` for a model served on
+that host, `gateway=<port>` when started with `--mesh-gateway` (a CONNECT proxy on port+1). On its
+check cadence the model manager may **borrow**: `peer_brain()` attaches a peer's served model when
+this node has no brain (`mesh_use_peer_brain`), `gateway()` routes outbound HTTPS through an online
+peer's proxy when the local internet probe fails (`mesh_use_gateway`, host global `net_proxy_set`
+→ `src/netproxy.rs`, honoured by `remote.rs` and `acquire.rs`). Both are opt-out knobs in
+`config.lua`, audited, and emit `mesh.borrow`. Not bridged yet: `genepool/`, `outcomes/`. Verified Mac ↔ GB10 over
+Tailscale (`docs/COLONY.md` → *Across hosts*). Env: `EVOLUA_MESH`, `_PORT`, `_SEEDS`, `_TOKEN`.
+
 ### The tick loop (`lua/core/kernel.lua`)
 
 `Kernel:run()` drives everything. Each tick, on independent cadences: (1) **perceive** — every
@@ -162,7 +203,11 @@ The evolver's `step()`:
    numeric perturbation via `evo_util.es_step` — each gene carries an inherited `sigma`);
    **crossover** two tournament parents; a **bandit drive** invests in the highest-UCB template
    (`bandit_pick`, optimistic prior tries each once); **soft probabilistic death** culls organs
-   below `2×retire_floor` (protected and cell-elite lineages exempt);
+   below `2×retire_floor` (cell elites exempt; of each `protected` template only the fittest
+   living copy — its *keeper* — is exempt, surplus copies compete normally). Protected templates
+   also have their own carrying capacity, `protected_max` (default 1), enforced by
+   `Evolver:capacity()` on every breeding path (mutate/crossover/bandit/colony HGT) — cull-exempt
+   + breedable would otherwise fill `max_per_template` with immortal duplicates;
 5. **entropy** — decay idle fitness; per-generation metrics appended to `state/evolution.log`.
 
 Fitness itself is honest (see the bus); organs can `act` via the safety-gated actuator path (see
@@ -200,10 +245,12 @@ philosophy) that's isolated enough not to clobber core globals, wires its subscr
   Approval is a file dance:
   `approvals/pending-<id>.md` → move to `approved/` to apply (archived to `done/`), delete to
   reject. Every decision/action is appended to `state/audit.log`.
-- `lua/core/modelmgr.lua` + `lua/core/hostcaps.lua` — meta-evolution: probe RAM/cores/disk/power,
-  and climb a model ladder when the brain is a bottleneck (high reasoner fallback) and the host
-  has capacity (Phase 4). **Acquisition is fully wired**: ladder tier 2 carries a *pinned*
-  `url`+`sha256`, and `model_acquire` downloads it — verified end-to-end in both **unattended**
+- `lua/core/modelmgr.lua` + `lua/core/modelfind.lua` + `lua/core/hostcaps.lua` — brain management
+  (see "Build & run" for the online → found → download → rules order and the failover): probe
+  RAM/cores/disk/power, attach what fits, and climb the pinned ladder when the brain is a bottleneck
+  (high reasoner fallback, or `--model-force-upgrade`) and the host has capacity (Phase 4).
+  **Acquisition is fully wired**: every ladder tier carries a *pinned* `url`+`sha256`, and
+  `model_acquire` downloads it — verified end-to-end in both **unattended**
   (L4 acts directly) and **approval-gated** (L3 → approval inbox → `poll_approvals` enacts) modes.
   The organism chooses *when* to fetch, never *what* (the pinned url+sha bound it to a vetted file).
   Opt-in `model_force_upgrade` / `model_ignore_battery` override the bottleneck/power guards (off
@@ -211,6 +258,48 @@ philosophy) that's isolated enough not to clobber core globals, wires its subscr
   (`hostcaps.lua`) — "Pages free" alone reads near-zero and would block every upgrade.
 - `lua/core/platform.lua` — the OS abstraction (macOS/Linux/Windows) for process listing, error
   logs, and actuator actions. Anything OS-specific belongs here, behind its interface.
+
+### Synthesis — the `synth` organ (the brain writes organs)
+
+Templates are the **floor**, not the ceiling. The seeded `synth` blueprint (`templates.lua`
+`T["synth"]`, protected, gated by `cfg.synth`) makes the brain *write whole new organ files* for
+needs no blueprint covers: the directed goal (always attempted — `synth_goal_always` — even when a
+goal keyword also matched a template) and the most chronically unhandled stimulus. The loop, every
+`synth_every` ticks, at most `synth_max` per life, blocking the tick loop for the call:
+1. **Brief** — one LLM call turns the (often Turkish) purpose into one English sentence of technical
+   requirements naming a read-only command *and an alternative* in backticks.
+2. **Perceive before coding** — the allow-listed commands from the brief (`SAMPLE_OK`) are run
+   **bounded** (5 s via `timeout`/`perl alarm`; a streaming `top` is reported as such) and a
+   representative slice of their REAL output goes into the prompt. This is what let a 3B model pick
+   `lsof` over `netstat` when `netstat -an` printed no TCP table inside `io.popen` on this host.
+3. **Write** — the SYSTEM prompt carries a complete, pattern-free worked example (small models copy
+   whatever example they see — a `df` example became a `df` parser for a load-average goal) and hard
+   rules: no `...` placeholders, one handler for a stimulus need, `return { handled = true }` only
+   for real work, never echo payloads, never spawn `evolua`/`lua`.
+4. **Validate** — compile-only (`cfg.compile`, never executes), denylist (`DENY`, word boundaries
+   include `_`), **pre-flight**: every `match("…")` pattern is tried against the organ's *own*
+   command's real output (then the brief sample); 0 lines → rejected with the real lines to fit;
+   **same-approach guard**: a fingerprint (events, command, pattern, handled, emit) equal to a
+   failed attempt is rejected; three identical rejections → the need backs off (`S.cooldown`).
+5. **Install** via `ctx.registry:load`, record the birth as template `synth:llm`, keep the source
+   (`S.children[n].src`) so a cull by any path still yields a lesson.
+6. **Select** — honest fitness + **report value** (`reporter.lua`: a report after ≥ `report_stale_ticks`
+   quiet earns `report_reward` and a mark in the per-organ **findings ledger** `memory.valued[organ]`;
+   a same-shape repeat within that window costs `report_stale_penalty` and a mark in `memory.stale[organ]`).
+   A model-written organ counts as *working* while `stale ≤ report_noise_ratio × valued` — a wave
+   detector reports a bounded few times per wave, a garbage reporter forever — and a working organ is
+   spared by both the synth's selection and the evolver's cull however low its bus fitness (rare-event
+   watchers handle almost nothing on the bus between events; round 1 of `docs/TRIALS.md` lost a correct
+   port watcher to exactly that). Otherwise, after `synth_grace` (also honoured by the evolver cull for
+   `synth:*` organs) a child below `retire_floor` is retired and its source + a precise *why* (silent
+   stimuli / no `handled` / nothing valued / crashed) + the list of tried approaches feed the next
+   synthesis. Crashes are recorded as coding slips, not banned approaches. Runtime errors →
+   `synth_repairs` repair rounds first, with the failing source line quoted and the Lua slips seen in
+   practice listed (gsub's two returns, read-before-close, one variable per capture, no table.find).
+Model-written organs are `plugins/syn_*.lua` (gitignored). Real trials of this loop (five goals,
+real perturbations, a 7B brain over Ollama on a GB10) are written up in `docs/TRIALS.md`. Observed: a 1.5B brain compiles and runs
+but cannot translate "load" into parsing a load-average column; 3B gets the command and column right
+but still mis-parses padded tables; a hosted 20B+ model writes a working organ on the first try.
 
 ### Environment exploration — the `explorer` organ
 

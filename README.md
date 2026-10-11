@@ -26,10 +26,11 @@ the organism's vitals and feeds them back — it watches, it never steers (see b
 
 ```bash
 # Build the single binary (Lua organism is embedded via rust-embed; mlua 5.4 vendored).
-cargo build --release                                   # perception + rules (no LLM)
-cargo build --release --features embed_smol             # + embedded decision brain
-cargo build --release --features 'embed_smol acquire'   # + runtime model upgrade
-cargo build --release --features 'embed_smol gpu-metal' # macOS GPU backend
+cargo build --release                                   # default: ~6 MB, NO model bytes — the brain is
+                                                        # found/downloaded/streamed at runtime (llm+acquire+remote)
+cargo build --release --no-default-features             # rules-only (no LLM runtime at all)
+cargo build --release --features embed_smol             # + bake a 135M model in (offline hosts only, +140 MB)
+cargo build --release --features gpu-metal              # macOS GPU backend for the local brain
 
 ./target/release/evolua --ticks 60 --tick-seconds 0.2        # bounded fast demo
 ./target/release/evolua --goal "watch and report errors"     # directed mode
@@ -49,6 +50,33 @@ lua lua/main.lua --goal "log filesystem changes"
 > In plain-Lua mode, redirect the data home by injecting it as a global (the env var is only
 > read in binary mode): `lua -e "EVOLUA_HOME='/path'" lua/main.lua`.
 
+### Where the brain comes from (and the binary stays small)
+
+The binary carries **no model**. At birth the organism picks a brain in this order and keeps
+**failing over** between them for the rest of its life:
+
+1. **Online service, free tiers first** (`--llm-api auto`, the default): the first provider whose
+   key is in the environment — `ollama` (a local server, no key) → `groq` → `cerebras` → `gemini`
+   → `openrouter` (free model) → `mistral` → `github` → `huggingface` — then the **keyless** public
+   endpoint (`pollinations`), then paid `openai` / `anthropic`. Keys are read from the usual env
+   vars (`GROQ_API_KEY`, …) **or from a one-line file `keys/<provider>`** in the data home, which a
+   running organism picks up without a restart. Any OpenAI-compatible URL works too
+   (`--llm-api https://host/v1`, `anthropic+URL` pins the Anthropic wire format).
+2. **A GGUF already on the host** (`core/modelfind.lua`): Ollama's blob store, LM Studio, the
+   Hugging Face cache, llama.cpp caches, `--model-dir`. The largest coder/instruct model that fits
+   the RAM budget wins.
+3. **Download sized to the host**: a pinned ladder (Qwen2.5-Coder-Instruct 0.5B → 1.5B → 3B → 7B,
+   url + sha256) through the autonomy ladder; hot-swapped in when it lands, never re-downloaded.
+4. **Rules** — always there.
+
+**Failover:** three consecutive online failures (blocked network, quota, outage; `401/402/403`
+immediately) put the service in a backoff window; the model manager then finds or downloads a
+local brain so the organism keeps thinking, probes the service on the model-check cadence, and
+switches back when it answers — freeing the local model's RAM. No key anywhere? It writes
+`approvals/api-key-wanted.md` (free providers, where a key comes from, where to drop it) and
+carries on with rules / the local model. No provider lets a program sign itself up, so that step
+stays human.
+
 ---
 
 ## What it can do
@@ -56,10 +84,11 @@ lua lua/main.lua --goal "log filesystem changes"
 | Phase | Capability |
 |---|---|
 | **1 · Sharp perception** | per-process CPU/RAM (`proc_top`), OS crash/error logs (`proc_errors`), an entity-based **world model**, rule-based situational reports |
-| **2 · Decision brain** | embedded tiny model (SmolLM2-135M) **interprets** a whole-system snapshot; learns from its own experience via a fitness-weighted **BM25 RAG**; falls back to rules when no model resolves |
+| **2 · Decision brain** | an LLM **interprets** a whole-system snapshot — an **online service (free tiers first, keyless fallback)**, a GGUF **found on the host**, or one **downloaded sized to the RAM**, with automatic **failover** between online and local; learns from its own experience via a fitness-weighted **BM25 RAG**; falls back to rules when nothing resolves |
 | **3 · Autonomy + curiosity** | the **L0–L4 ladder** (learn → report → notify → suggest → act), a file-based **approval inbox**, safe-list + reversibility + audit log, `curiosity`-driven active exploration |
-| **4 · Meta-evolution** | probes the host (`hostcaps`) and climbs a **model ladder** when the brain is a bottleneck and there's spare capacity; download + checksum + rollback (opt-in `acquire`) |
-| **5 · Colony, supervisor, purpose, exploration** | **self-replication** into a colony of communicating processes; an intelligent **when-to-split** decision (load + capacity); a host-side **supervisor** ("brainstem"); **goal acquisition** — offspring born specialized to a crystallized purpose, with the colony learning which purposes pay; and **environment exploration** — the organism scouts the host and grows its own senses |
+| **4 · Meta-evolution** | probes the host (`hostcaps`) and climbs a pinned **model ladder** when the brain is a bottleneck and there's spare capacity; download + checksum + hot-swap + rollback; frees the local model when the host shrinks or the online brain is back |
+| **6 · Synthesis — the brain writes organs** | templates are only the *floor*: the `synth` organ turns a goal or an unhandled stimulus into a one-sentence technical brief, **runs the real commands** and shows their output to the model, has it write a whole new organ, **pre-flights** the parser against those real lines, installs it, and lets honest fitness + report value select — failures feed the next attempt ("don't repeat this approach") |
+| **5 · Colony, supervisor, purpose, exploration** | **self-replication** into a colony of communicating processes — across **machines** too with `--mesh` (LAN discovery, seeds for Tailscale/WAN); an intelligent **when-to-split** decision (load + capacity); a host-side **supervisor** ("brainstem"); **goal acquisition** — offspring born specialized to a crystallized purpose, with the colony learning which purposes pay; and **environment exploration** — the organism scouts the host and grows its own senses |
 
 Phases 1–4 are the original organism; **Phase 5 is the colony/supervisor/purpose layer**
 documented in depth in [docs/COLONY.md](docs/COLONY.md).
@@ -176,7 +205,7 @@ templates — it is a genuine genetic system. (Design rationale + verification:
 | Mechanism | What it does |
 |---|---|
 | **Honest fitness** | reward is derived from *observable bus facts* — filling a starved stimulus (surprise) ÷ co-handlers (anti-redundancy sharing) − measured cost (parsimony) — **not** the number an organ declares about itself. Breaks reward-hacking (e.g. the colony minting its own reward each heartbeat). |
-| **Tournament + soft death** | k-tournament breeding (not just the single fittest) and probabilistic culling preserve diversity; seeded-infrastructure lineages (colony/supervisor/explorer) are exempt from culling. |
+| **Tournament + soft death** | k-tournament breeding (not just the single fittest) and probabilistic culling preserve diversity; seeded-infrastructure lineages (colony/supervisor/explorer) never go extinct — their fittest copy is cull-exempt — but are capped at `protected_max` (default 1) so they can't fill the population with immortal duplicates. |
 | **Rule-DSL / genetic programming** | a `rule` organ's genome is a typed rule list — `when <stimulus> if <field> <op> <value> then <report\|log\|emit\|act>`. Mutation rewrites the stimulus/field/op/value/action and adds/removes rules; crossover recombines two parents. The grammar emits **only safe primitives** (no `os`/`io`) — structurally **capability-isolated**, so structure can evolve while staying safe. |
 | **Quality-Diversity (MAP-Elites)** | a behavior archive keeps the best organ per niche (primary stimulus × subscription breadth); cell elites are protected and breeding can *illuminate* empty niches — a **repertoire of competents**, not convergence onto one peak. |
 | **Self-adaptive (ES) mutation** | each numeric gene carries its own log-normally-mutated step size (`sigma`), inherited across generations — the lineage learns *how much* to mutate each gene. |
@@ -220,13 +249,16 @@ table (`bus`, `memory`, `registry`, `evolver`, `worldmodel`, `reasoner`, `autono
 |---|---|
 | `src/main.rs` | single-binary host: embeds `lua/`, resolves data home, injects globals, spawns supervisor |
 | `src/supervisor.rs` | host-side autonomic watch (the "brainstem"): liveness + vitals, never enforces |
-| `src/llm.rs` | embedded decision brain (llama-cpp-2 CPU) — `llm`/`embed_smol` feature |
-| `src/acquire.rs` | GGUF download + SHA-256 + atomic swap + rollback — `acquire` feature |
+| `src/mesh.rs` | host-side **mesh** nerve (opt-in): UDP/seed discovery + TCP mail that bridges `colony/peers` and `colony/inbox` across machines; beacons carry capabilities (brain, served model, internet, gateway) so a node can borrow a peer's **model** or **internet** |
+| `src/netproxy.rs` | process-wide outbound proxy the model manager points at a peer gateway (used by the online brain client and the downloader) |
+| `src/llm.rs` | local decision brain (llama-cpp-2), late-bound: `llm_load`/`llm_unload` hot-swap — `llm` feature |
+| `src/remote.rs` | online brain: OpenAI-compatible + Anthropic clients, call budget, failure backoff, recovery probe — `remote` feature |
+| `src/acquire.rs` | GGUF download + SHA-256 + atomic swap + rollback, idempotent — `acquire` feature |
 | `lua/core/kernel.lua` | life cycle / tick loop; reward/error feedback → fitness |
 | `lua/core/bus.lua` | event bus (pub/sub) — the nervous system; per-event stats |
 | `lua/core/memory.lua` | persistent cross-life memory; fitness, generation, counters |
 | `lua/core/registry.lua` | plugin loader + sandbox + hot-reload + retirement |
-| `lua/core/templates.lua` | **genome blueprints** — render organ source; the **rule-DSL/GP** organ + `colony`, `supervisor`, `explorer` |
+| `lua/core/templates.lua` | **genome blueprints** — render organ source; the **rule-DSL/GP** organ + `colony`, `supervisor`, `explorer`, and `synth` (the model-written-organ loop) |
 | `lua/core/evolver.lua` | evolution engine: need/goal/**bandit** growth, **tournament** selection + soft death, **MAP-Elites** archive, **ES** mutation, **crossover**, honest-fitness ranking |
 | `lua/core/evo_util.lua` | shared evolutionary operators (Box–Muller gauss + self-adaptive ES step) |
 | `lua/core/worldmodel.lua` | entity (per-process) dossiers: CPU/errors/temperature/trend/salience |
@@ -234,9 +266,10 @@ table (`bus`, `memory`, `registry`, `evolver`, `worldmodel`, `reasoner`, `autono
 | `lua/core/rag.lua` | fitness-weighted BM25 experience bank |
 | `lua/core/autonomy.lua` | the L0–L4 ladder + approval inbox + safe-list + audit log; **evolved-organ action requests + outcome-credit** |
 | `lua/core/hostcaps.lua` | host probe (RAM/cores/power/disk) |
-| `lua/core/modelmgr.lua` | meta-evolution: model ladder + capacity/need decision |
+| `lua/core/modelmgr.lua` | brain management: online↔local **failover**, key request/pickup, RAM budget, host-model attach, pinned ladder + capacity/need decision |
+| `lua/core/modelfind.lua` | discovers GGUFs already on the host (Ollama, LM Studio, HF cache, llama.cpp) and scores what fits |
 | `lua/core/platform.lua` | OS abstraction (mac/linux/win): process list, error logs, actuators |
-| `lua/core/reporter.lua` | actuator: status summary + observations → Markdown reports |
+| `lua/core/reporter.lua` | actuator: status summary + observations → Markdown reports; pays **report value** (a finding after a quiet spell earns, a rapid-fire repeat costs) |
 | `lua/sensors/*.lua` | `sys_metrics`, `logwatch`, `fswatch`, `introspect`, `proc_top`, `proc_errors`, `curiosity` |
 | `lua/config.lua` | all "instincts" as plain numbers (thresholds, cadences, caps, colony/purpose) |
 | `lua/main.lua` | entry point + CLI flag parser + organ seeding |
@@ -258,14 +291,15 @@ Directed-mode matching is bilingual: "hata"/"error" → `error_reporter`, "dosya
 ## Data home layout (`$EVOLUA_HOME`)
 
 ```
-plugins/    organs the organism wrote (gen_*.lua); deletable, it regrows them
+plugins/    organs the organism wrote (gen_*.lua from templates, syn_*.lua by the brain); deletable
 reports/    timestamped Markdown status reports (entity table + narrative + fitness)
 state/      memory.lua (cross-life memory) · evolua.log · audit.log
             evolution.log (per-generation metrics) · repertoire.txt (MAP-Elites QD map)
             heartbeat · vitals · supervisor.log   (Phase 5: host watch)
-approvals/  pending-*.md → (you) approved/ → done/
-models/     downloaded models + current_tier (Phase 4)
-colony/     peers/<id> beacons · inbox/<id>/ mailboxes · clone.lock · genepool/ (HGT)
+approvals/  pending-*.md → (you) approved/ → done/ · api-key-wanted.md (how to give it an online brain)
+keys/       <provider> — one-line API key files, picked up live (alternative to env vars)
+models/     downloaded models · current_model · current_tier (Phase 4)
+colony/     peers/<id> beacons (addr= for remote hosts via --mesh) · inbox/<id>/ mailboxes · clone.lock · genepool/ (HGT)
             children/<id>/ (clone sub-homes; inherited.lua = vertical gene transfer)
             lineage.log (purpose ledger) · outcomes/<id> (S4 purpose payoff)
 ```
@@ -295,6 +329,10 @@ script unless injected as a global.
 --clone-generalist         clones are generic copies (skip goal crystallization)
 --purpose-mode <m>         how a clone's goal is chosen: explore|exploit|portfolio
 --no-purpose-learn         disable S4 (don't bias goals by harvested child payoff)
+--mesh                     join organisms on other hosts (LAN broadcast + TCP mail; see docs/COLONY.md)
+--mesh-seed <host:port>    announce to a peer across Tailscale/VPN/WAN (repeatable; implies --mesh)
+--mesh-port <n>            mesh UDP/TCP port (default: 7707)
+--mesh-gateway             also serve as an internet gateway (CONNECT proxy) for mesh peers
 --clone-max-peers <n>      hard cap on simultaneous live instances (default: 3)
 --clone-generations <n>    hard cap on clone depth, root=0 (default: 1)
 --no-colony                do not seed the colony organ
@@ -303,7 +341,17 @@ script unless injected as a global.
 --no-rule                  do not seed the evolvable rule-DSL/GP organ
 --no-explore-expand        explore, but don't auto-expand perception
 --explore-root <path>      add a directory the explorer may wander (repeatable)
+
+--llm-api <auto|provider|url>  online brain (default auto = free tiers first, see above)
+--llm-model <name>         model at that service · --llm-key-env <VAR> · --llm-budget <n>
+--no-llm-api / --no-llm-keyless   never go online / skip the keyless public endpoint
+--model <path.gguf>        use this local model · --model-dir <path> extra GGUF dir (repeatable)
+--model-max-mb <n>         cap model size · --no-model-discover · --model-force-upgrade
+--no-synth                 do not seed the synthesizer (model-written organs)
 ```
+
+Brain env knobs: `EVOLUA_LLM_API`, `EVOLUA_LLM_MODEL`, `EVOLUA_LLM_BASE` (proxy/test base URL),
+`EVOLUA_LLM_CTX` (local context, default 4096), `EVOLUA_MODEL` (explicit GGUF).
 
 Host-side supervisor env knobs: `EVOLUA_WATCHDOG` (0=off), `EVOLUA_WATCHDOG_SECS`,
 `EVOLUA_WATCHDOG_STALL`, `EVOLUA_WATCHDOG_KILL` (opt-in last-resort exit), `EVOLUA_WATCHDOG_KILL_SECS`.
@@ -384,5 +432,6 @@ resource consumption, or other consequences of running this software.
 - [docs/DEMO.md](docs/DEMO.md) — **annotated capture of a real run** (for reviewers: see what it actually does)
 - [docs/COLONY.md](docs/COLONY.md) — Phase 5 deep-dive: colony, intelligent split, supervisor, goal acquisition
 - [docs/TESTING.md](docs/TESTING.md) — the bounded verification suite and what each check proves
+- [docs/TRIALS.md](docs/TRIALS.md) — **five goals the brain had to solve by writing organs** (disk, ports, docker, logs, sessions) on a GB10 host: what it wrote, what it caught, what selection did
 - [docs/ROADMAP.md](docs/ROADMAP.md) — design rationale across all phases (mostly Turkish)
 - [CLAUDE.md](CLAUDE.md) — guidance for AI assistants working in this repo
