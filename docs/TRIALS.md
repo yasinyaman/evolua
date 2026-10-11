@@ -206,6 +206,37 @@ and while a goal's organ has no finding yet, no synthesis budget goes to side ne
   says a larger coder model would close the remaining gap. The organism does not care which: it
   picks the best brain it can reach and fails over when it can't.
 
+## Round 5 — the merged binary: column check, unit map, mechanical repairs (disk and docker)
+
+Run 2026-10-11 evening on the GB10 after the brain-sourcing line was merged onto `feat/local-brains`,
+same two goals that had never produced a working organ, brain `qwen2.5:7b-instruct` over Ollama
+(`--llm-api http://127.0.0.1:11434/v1`). Three passes, each one teaching the loop something; the
+synth organ changed between passes, the model did not.
+
+| pass | disk | docker |
+|---|---|---|
+| 5a (column check + column map) | organ installed on attempt 5 — split the line with `gmatch("%S+")`, took `f[5]`… and `tonumber("94%")` is nil: silent for its whole grace, retired; the same-approach guard then blocked the right fix 3× ("df -h + %S+" fingerprinted the same) | 12 rejections in a row, all `table.find` (told "no table.find" each time); organ on attempt 13, correct (`docker ps -q` counts, baseline, diff) but born after both pulses |
+| 5b (units in the column map, conversion in the fingerprint, a lesson per slip) | 15 rejections, all `tonumber(f[5]:gsub(...))` — the model took the unit lesson and dropped the inner parentheses every single time | organ on attempt 6; reported once at the first run (the baseline echo: "16 stopped: …"), missed the start/stop, retired as noise |
+| 5c (mechanical repairs: `tonumber((…))`, `__array_find`) | **organ on attempt 1** (`auto-fixed 4 known slips`), parses every `df` field correctly — and reports "93% used" every 8 s: the brief said *anomaly = above 90 %* and this disk sits at 93 %; the noise rule retired it (38 stale reports); a 3 GB write can't move the percent of a 916 GB disk anyway | organ on attempt 2 (`auto-fixed 2`), `docker ps -q` + `__array_find` + diff — called `__array_find(running_ids, id, last_running_ids)`: searched the wrong list, found every id, reported nothing |
+
+What this pass settled:
+
+- **Mechanical repairs beat lessons.** Thirty-plus rejections across 5a/5b were two slips with one
+  fix each; a 7B model does not apply the fix when told, but the organism can apply it itself.
+  After 5c the model's attempts are judged on the organ's *logic*, where the real 7B limit is: the
+  wrong list in a diff, a threshold where a change was asked for.
+- **The pre-flight now catches what it was built for**: `([%d%.]+)` was rejected as "pieces of
+  fields, not whole fields" with the column map; `^(%d+)` as fitting 0 of 9 real lines.
+- **The brief can be the trap.** "Report an anomaly if above 90 %" on a host already at 93 % is a
+  constant alarm; the report-value rule correctly culled it, but the goal (*hızla dolan* — filling
+  fast) asks for a *rate*, and the brief lost that. The disk test itself is also too small for its
+  instrument: 3 GB is 0.3 % of this disk.
+- **The dry run and the tick loop**: three model calls of ~30 s each block the organism for 90 s;
+  the host watchdog flagged it STALLED (`hb_age=88s`) once per pass. Known, documented, still true.
+- Rounds 1–4 and this one agree on the shape of the gap: the loop's safeguards remove the
+  mechanical failures one class at a time; what remains needs a stronger coder model than 7B, and
+  the organism reaches one as soon as a key or a bigger served model is available.
+
 ## For contrast: the same loop on an 8 GB laptop
 
 The Mac runs (`qwen2.5-coder` 1.5B and 3B GGUFs found in Ollama's store, CPU/Metal) showed where
