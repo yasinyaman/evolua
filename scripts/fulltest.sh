@@ -100,7 +100,10 @@ for t in colony supervisor explorer; do
 done
 
 echo "== T9 S4 purpose-learning =="
-life t9 --ticks 360 --tick-seconds 0.04 --clone --clone-ignore-battery; sleep 1
+# "proven" needs the third split at the earliest (the first two try the untried goals on the
+# optimistic prior); with child boot + the clone cooldown, 360 ticks gave only two splits on a
+# slow CI runner, so this life is longer
+life t9 --ticks 600 --tick-seconds 0.04 --clone --clone-ignore-battery; sleep 1
 [ "$(count_files "$H/t9/colony/outcomes" .)" -gt 0 ] && ok "children harvested payoff" || no "no outcome ledger"
 grep -qE "proven avg=" "$H/t9/colony/lineage.log" 2>/dev/null && ok "later splits chose by proven payoff" || no "no learning"
 
