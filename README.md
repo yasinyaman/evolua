@@ -1,6 +1,6 @@
 # EvoLua — a self-evolving Lua organism
 
-🇬🇧 English · [🇹🇷 Türkçe](README.tr.md) · **site:** [yasinyaman.github.io/evolua](https://yasinyaman.github.io/evolua/)
+🇬🇧 English · [🇹🇷 Türkçe](README.tr.md) · **site:** [yaman.dev/evolua](https://yaman.dev/evolua/)
 
 EvoLua is an experimental, self-contained "digital organism." It **perceives** its host
 environment (per-process CPU/RAM, OS error logs, the filesystem), builds an entity-based
