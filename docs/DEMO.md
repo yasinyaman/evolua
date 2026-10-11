@@ -32,8 +32,8 @@ sense organ online: curiosity — actively profiles the least-known process
 awoke with 3 organ(s), generation 3
 ```
 
-The three foundational organs are seeded automatically (no kernel changes — they're genome
-blueprints in `templates.lua`):
+The foundational organs — colony, supervisor, explorer, an evolvable rule organ and the synthesizer —
+are seeded automatically (no kernel changes — they're genome blueprints in `templates.lua`):
 
 ```
 spawned organ 'gen_colony_1'     from <colony>
@@ -45,7 +45,7 @@ spawned organ 'gen_supervisor_3' from <supervisor>
 
 > This capture predates protected organs becoming singletons. The two extra supervisors were
 > mutation copies of an organ that topped the leaderboard by handling the `host.vitals`
-> stimulus it emitted itself. A current run seeds exactly one colony, explorer and supervisor,
+> stimulus it emitted itself. A current run seeds exactly one colony, explorer, supervisor and synth,
 > and the bus gives an organ no credit for its own emits.
 
 ## 2. Perception — an entity-based world model
@@ -200,7 +200,7 @@ load/attach failures: 0   ·   fatal errors: 0
 
 This walkthrough is one run; behavior varies with the host environment (it reacts to whatever
 the machine offers). The repeatable verification is the bounded suite in
-[TESTING.md](TESTING.md) — **25 checks, all green** — covering build, base run, colony comms,
+[TESTING.md](TESTING.md) — **27 checks, all green** — covering build, base run, colony comms,
 intelligent split, purpose crystallization, power-aware hold-off, generalist clones, the
 supervisor roundtrip, cross-life memory, S4 purpose-learning, and environment exploration.
 

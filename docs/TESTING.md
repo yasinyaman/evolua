@@ -30,13 +30,13 @@ because the host-side watch thread only exists in the Rust host.
 | **T0** | `cargo build` | the Rust host (incl. `src/supervisor.rs`) compiles clean |
 | **T0b** | unit tests | `lua tests/run.lua` and `cargo test` pass |
 | **T1** | CLI | `--help` lists the colony/clone flags; a bad value (`--ticks abc`) exits 2 |
-| **T2** | base free-mode run | the organism boots, grows organs for unmet needs, writes reports, no load/attach failures |
+| **T2** | base free-mode run | the organism boots and grows organs for unmet needs (`plugins/*.lua` appear); no `fatal` / load / attach failures in the log |
 | **T3** | colony beacon | a single instance announces presence in `colony/peers/<id>` |
-| **T4** | intelligent split + purpose | under load it splits, **crystallizes a goal**, the child boots **directed** and grows exactly that goal's organ; `colony/lineage.log` records the purpose |
+| **T4** | intelligent split + purpose | under load it splits, **crystallizes a goal**, the child boots **directed** (`mode=directed` in its log); `colony/lineage.log` records the purpose |
 | **T5** | power-aware hold-off | on battery it logs `holding off` and spawns **no** clones (capacity guard) |
 | **T6** | generalist clones | `--clone-generalist` makes children generic (boot **free**, ledger says `generalist`) |
-| **T7** | supervisor roundtrip | the Rust thread writes `state/vitals`; the Lua organ beats `state/heartbeat`, reads vitals, and surfaces them (`host.vitals` → report); one instance counts as `colony_procs=1` |
-| **T8** | reincarnation | a second life inherits organs (cross-life memory); colony / supervisor / explorer stay **one each** (protected organs are singletons) |
+| **T7** | supervisor roundtrip | the Rust thread writes `state/vitals` and `state/supervisor.log`; the Lua organ reads vitals and surfaces them (`vitals: rss=` in a report); one instance counts as `colony_procs=1` |
+| **T8** | reincarnation | a second life inherits organs (cross-life memory); colony / supervisor / explorer stay **one each** (protected organs — those three and synth — are singletons; the suite checks the three) |
 | **T9** | S4 purpose-learning | children harvest payoff into `colony/outcomes/`; later splits crystallize by **proven** payoff (the colony learns which purposes pay) |
 | **T10** | environment exploration | the `explorer` scouts the host and **expands perception** (auto-adds discovered dirs/logs); huge/VCS dirs (`target/`, `.git`) are skipped |
 | **T11** | disabled templates | with `--no-colony --no-supervisor --no-explorer --no-rule`, no drive grows any of them |
@@ -90,7 +90,7 @@ T11 disabled templates .......... PASS
 PASS=25 FAIL=0 SKIP=1 — ALL GREEN
 ```
 
-> Note on T8: protected infrastructure organs (colony, supervisor, explorer) are singletons —
+> Note on T8: protected infrastructure organs (colony, supervisor, explorer, synth) are singletons —
 > seeded once, never duplicated by mutation, illumination or the bandit, and exempt from culling.
 > Earlier versions let the evolver copy them up to `max_per_template = 3`; the supervisor then
 > topped the leaderboard by handling the `host.vitals` stimulus it emitted itself. Both are fixed:

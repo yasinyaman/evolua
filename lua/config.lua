@@ -66,7 +66,7 @@ return {
   -- it can use (a GGUF another tool fetched, a running local LLM server, the OS's
   -- on-device model), the biggest such is used instead; the default stays the
   -- fallback. $EVOLUA_MODEL always wins. --brain / $EVOLUA_BRAIN restrict the kind.
-  brain             = "auto",   -- auto | rules | gguf | embedded | service | apple
+  brain             = "auto",   -- auto | rules | remote | gguf | embedded | service | apple
   model_ram_share   = 0.25,     -- "fits": a model may take at most this share of physical RAM
   model_max_mb      = nil,      -- optional hard cap on model size (MB), e.g. 2000
   brain_max_seconds = 10,       -- "fast enough": slower on average than this → step down to a smaller one

@@ -82,7 +82,7 @@ documented in depth in [docs/COLONY.md](docs/COLONY.md).
 
 ```mermaid
 flowchart TD
-  A[main.lua starts] -->|seeds colony + supervisor organs| B[Kernel tick loop]
+  A[main.lua starts] -->|seeds colony + supervisor + explorer + rule + synth organs| B[Kernel tick loop]
   B -->|self.heartbeat each tick| C[colony organ]
   C --> C1[1 · write presence beacon]
   C1 --> C2[2 · drain inbox → colony.message]
@@ -162,7 +162,7 @@ sensors start perceiving it on the next tick. New perception → new stimuli →
 and, through the colony, **new purposes**. So exploration is the front-end that generates the
 environmental diversity that goal-acquisition then exploits. It explores outward (its own data
 home and huge/VCS dirs like `target/`/`.git` are skipped) within `explore_roots` (default: the
-data home + cwd; widen with `--explore-root`). `--no-explorer` / `--no-explore-expand` disable it.
+data home + cwd; widen with `--explore-root`). `--no-explorer` disables it; `--no-explore-expand` keeps it scouting but stops the perception expansion.
 
 ### The host-side supervisor ("brainstem")
 
@@ -187,7 +187,7 @@ templates — it is a genuine genetic system. (Design rationale + verification:
 | Mechanism | What it does |
 |---|---|
 | **Honest fitness** | reward is derived from *observable bus facts* — filling a starved stimulus (surprise) ÷ co-handlers (anti-redundancy sharing) − measured cost (parsimony) — **not** the number an organ declares about itself. Breaks reward-hacking (e.g. the colony minting its own reward each heartbeat). |
-| **Tournament + soft death** | k-tournament breeding (not just the single fittest) and probabilistic culling preserve diversity; seeded-infrastructure organs (colony/supervisor/explorer) are singletons, exempt from culling and never duplicated. |
+| **Tournament + soft death** | k-tournament breeding (not just the single fittest) and probabilistic culling preserve diversity; seeded-infrastructure organs (colony/supervisor/explorer/synth) are singletons, exempt from culling and never duplicated. |
 | **Rule-DSL / genetic programming** | a `rule` organ's genome is a typed rule list — `when <stimulus> if <field> <op> <value> then <report\|log\|emit\|act>`. Mutation rewrites the stimulus/field/op/value/action and adds/removes rules; crossover recombines two parents. The grammar emits **only safe primitives** (no `os`/`io`) — structurally **capability-isolated**, so structure can evolve while staying safe. |
 | **Quality-Diversity (MAP-Elites)** | a behavior archive keeps the best organ per niche (primary stimulus × subscription breadth); cell elites are protected and breeding can *illuminate* empty niches — a **repertoire of competents**, not convergence onto one peak. |
 | **Self-adaptive (ES) mutation** | each numeric gene carries its own log-normally-mutated step size (`sigma`), inherited across generations — the lineage learns *how much* to mutate each gene. |
@@ -300,10 +300,11 @@ and the default stays the fallback. At boot (`--brain auto`, the default) `core/
 3. else the **biggest** brain on the machine, of any kind, that is bigger than the default,
    fits (`model_ram_share` of physical RAM, default 25%; optional `model_max_mb` cap), hasn't
    been backed off, and loads;
-4. else the keyless public endpoint; else the default; else rules.
+4. else the default (a downloaded `decision.gguf`, or the embedded model on an `embed_smol` build);
+   with no default, or one that fails to load, the keyless public endpoint; else rules.
 
-**Failover:** three consecutive online failures (blocked network, quota, outage; `401/402/403`
-immediately) put the service in a backoff window during which calls fall straight through to the
+**Failover:** three consecutive online failures (blocked network, quota, outage; `401/402/403` and
+`429` immediately) put the service in a backoff window during which calls fall straight through to the
 local brain; the model manager loads one if none is (machine brain, else the default), probes the
 service on the model-check cadence, and switches back when it answers — freeing the local model's
 RAM. No key anywhere? It writes `approvals/api-key-wanted.md` (free providers, where a key comes
@@ -414,7 +415,8 @@ Mesh env knobs: `EVOLUA_MESH`, `EVOLUA_MESH_PORT`, `EVOLUA_MESH_SEEDS`, `EVOLUA_
 | **L4 act** | autonomous action (reversible + safe-listed only) | confidence ≥ threshold **and** ceiling ≥ L4 |
 
 `autonomy_ceiling` caps the ladder. Destructive actions (kill) **always** require approval;
-reversible safe-listed verbs (throttle, model_downgrade; model_upgrade only with `--unattended`) can act at L4 above
+reversible safe-listed verbs (throttle, notify, model_downgrade, model_rollback, model_adopt; model_upgrade only with
+`--unattended`) can act at L4 above
 `act_min_conf`. **Evolved organs** (rule-DSL `act`) are capped more conservatively still —
 `evolved_action_ceiling` defaults to `suggest`, so their requested actions go to the approval
 inbox, never autonomous, whatever the global ceiling. Approval is a file dance:
@@ -484,5 +486,7 @@ resource consumption, or other consequences of running this software.
 - [docs/DEMO.md](docs/DEMO.md) — **annotated capture of a real run** (for reviewers: see what it actually does)
 - [docs/COLONY.md](docs/COLONY.md) — Phase 5 deep-dive: colony, intelligent split, supervisor, goal acquisition
 - [docs/TESTING.md](docs/TESTING.md) — the bounded verification suite and what each check proves
-- [docs/ROADMAP.md](docs/ROADMAP.md) — design rationale across all phases (mostly Turkish)
+- [docs/TRIALS.md](docs/TRIALS.md) — synthesis trials: can the brain write a working organ for a goal it has never seen?
+- [docs/ROADMAP.md](docs/ROADMAP.md) — design rationale across all phases, what shipped, what is open
+- [docs/BUILD-PLAN.md](docs/BUILD-PLAN.md) — the phase-by-phase construction notes
 - [CLAUDE.md](CLAUDE.md) — guidance for AI assistants working in this repo

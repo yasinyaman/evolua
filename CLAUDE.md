@@ -31,10 +31,11 @@ from the repo root. The empty `[workspace]` table in `Cargo.toml` keeps it its o
 root even if it is checked out inside another Cargo workspace.
 
 **Source vs. runtime artifacts** — the only source is `src/` (Rust host) and `lua/` (the
-organism). These directories are runtime output the organism regenerates and are gitignored;
+organism). These directories are runtime output the organism regenerates and are gitignored
+(`plugins/` only its `gen_*.lua` / `syn_*.lua` — a hand-authored plugin there is committable);
 do **not** treat them as source or hand-edit them:
-- `plugins/`, `reports/`, `state/`, `sandbox/` at the repo root, and the same dirs under
-  `lua/` (a plain-Lua run's default data home)
+- `plugins/`, `reports/`, `state/`, `sandbox/`, `colony/`, `models/`, `approvals/`, `keys/` at the
+  repo root, and the same dirs under `lua/` (a plain-Lua run's default data home)
 - a stray nested `evolua/` directory (created if launched from inside its own folder)
 
 ## Build & run
@@ -77,9 +78,10 @@ and the host (`src/brain.rs`) only loads what it is told to. Order for a life (`
    stripped for every backend (`brain.rs` `strip_thinking`), and Ollama is told `think: false`
    for the families that have it (`service.rs` `thinks`), or Qwen3 spends the whole token budget
    deliberating;
-4. **the keyless public endpoint** (pollinations; `llm_keyless`) — only when nothing on the machine
-   is worth using, because it answers 402 to big prompts;
-5. **the default** (`<home>/models/decision.gguf` if downloaded, else the embedded model) → rules.
+4. **the default** (`<home>/models/decision.gguf` if downloaded, else the embedded model on an
+   `embed_smol` build);
+5. **the keyless public endpoint** (pollinations; `llm_keyless`) — only when there is no default, or
+   it fails to load, because it answers 402 to big prompts → rules.
 `--brain <kind>` / `EVOLUA_BRAIN` restrict the choice (`remote` = online only); `--no-llm-api`
 keeps the organism offline; `--no-model-discover` ignores machine brains.
 
@@ -141,7 +143,7 @@ Two layers:
   platform helpers, log rotation, brain selection incl. online providers + failover against a
   fake host) and `cargo test` (service / acquire / remote add their own). Add a `tests/test_*.lua`
   file to `FILES` in `tests/run.lua` for a new area.
-- **Online failover, for real** — a mock OpenAI endpoint (`python3 -I mock_llm.py` on
+- **Online failover, for real** — a mock OpenAI endpoint (`python3 -I scripts/mock_llm.py`, on
   `127.0.0.1:48200`), `GROQ_API_KEY=x EVOLUA_LLM_BASE=http://127.0.0.1:48200/v1 evolua --llm-api
   groq --ticks 170 --tick-seconds 0.5`, kill the mock mid-run and restart it: `state/audit.log`
   must show `brain_failover: online → local` then `local → online`. Check `lsof -i :48200` first —
@@ -294,8 +296,9 @@ philosophy) that's isolated enough not to clobber core globals, wires its subscr
   routes proposals to the approval inbox; `--unattended` (or `EVOLUA_UNATTENDED=1`) flips all
   three at once so the organism *acts* on its own, including **downloading a better decision
   model without approval** — keep that opt-in, never the default. Destructive actions (kill) *always*
-  require approval; reversible safe-listed verbs (throttle, model_downgrade, model_upgrade)
-  can act at L4 above `act_min_conf`. **Evolved organs** (rule-DSL `act`) never execute — they
+  require approval; reversible safe-listed verbs (throttle, notify, model_downgrade,
+  model_rollback, model_adopt; model_upgrade only with `--unattended`) can act at L4 above
+  `act_min_conf`. **Evolved organs** (rule-DSL `act`) never execute — they
   *emit* an `action.request` that `Autonomy:request` routes through this same ladder but capped
   by `evolved_action_ceiling` (default `suggest` → approval inbox, never autonomous, whatever the
   global ceiling; kill is not even expressible in the grammar). A successful action earns
@@ -306,7 +309,7 @@ philosophy) that's isolated enough not to clobber core globals, wires its subscr
   reject. Every decision/action is appended to `state/audit.log`.
 - `lua/core/modelmgr.lua` + `lua/core/hostcaps.lua` — meta-evolution: probe RAM/cores/disk/power,
   and climb a model ladder when the brain is a bottleneck (high reasoner fallback) and the host
-  has capacity (Phase 4). **Acquisition is fully wired**: ladder tier 2 carries a *pinned*
+  has capacity (Phase 4). **Acquisition is fully wired**: every download tier carries a *pinned*
   `url`+`sha256`, and `model_acquire` downloads it — verified end-to-end in both **unattended**
   (L4 acts directly) and **approval-gated** (L3 → approval inbox → `poll_approvals` enacts) modes.
   The organism chooses *when* to fetch, never *what* (the pinned url+sha bound it to a vetted file).
@@ -385,7 +388,8 @@ copied, and re-rendered from its blueprint when that changes (`Evolver:rehydrate
 
 A single seeded organ (`templates.lua` `"colony"`) gives the organism a sense of *siblings*.
 It needs no core changes — it's grown like any other organ and seeded once by `main.lua`
-(idempotent across lives; also growable in directed mode by goal keyword e.g. "çoğal"/"koloni").
+(idempotent across lives; its goal keywords "çoğal"/"koloni" only matter when the seed was skipped,
+since `Evolver:spawn` refuses a second living protected organ).
 Two behaviors, both via a shared filesystem dir `$EVOLUA_HOME/colony/`:
 - **Communication (on by default):** each `self.heartbeat`, the organ writes a presence beacon
   (`colony/peers/<id>`), drains its mailbox (`colony/inbox/<id>/`) emitting a `colony.message`

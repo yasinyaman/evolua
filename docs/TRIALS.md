@@ -7,9 +7,12 @@ organism a **goal in Turkish on a topic no template covers**, lets it run for 36
 perturbation, and whether selection kept it.
 
 All trials were run on **2026-10-11** on `gb10` — an NVIDIA GB10 (aarch64, Ubuntu 24.04,
-121 GB) — with the brain picked **automatically**: a local Ollama server (free, keyless, first in
-the `auto` order), serving `qwen2.5:7b-instruct-q8_0`. The Mac runs of the same loop with 1.5B/3B
-local GGUFs are summarised at the end for contrast. Scripts: `gb10_trials.sh` (in the session
+121 GB) — thinking through the local Ollama server's `qwen2.5:7b-instruct(-q8_0)`. In rounds 1–4 the
+organism picked it by itself (the then-current provider list tried a local Ollama server first);
+since the merge a local server is a *machine* brain and the biggest served model wins, so round 5
+named it explicitly (`--llm-api http://127.0.0.1:11434/v1 --llm-model qwen2.5:7b-instruct`) to keep
+the rounds comparable. The Mac runs of the same loop with 1.5B/3B local GGUFs are summarised at the
+end for contrast. Scripts: `gb10_trials.sh` (in the session
 scratchpad; each trial = goal + perturbation function).
 
 | # | goal (as given) | topic | perturbation on the host |

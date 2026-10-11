@@ -140,7 +140,7 @@ değil — gerçek bir genetik sistem. (Tasarım + doğrulama: [docs/ROADMAP.md]
 | Mekanizma | Ne yapar |
 |---|---|
 | **Dürüst fitness** | ödül, organın *beyan ettiği* sayıdan değil *gözlemlenebilir bus olgularından* türetilir — aç bir uyaranı doldurma (sürpriz) ÷ ortak-işleyenler (fazlalık paylaşımı) − ölçülen maliyet. Reward-hacking'i kırar (örn. koloninin her heartbeat'te kendine ödül basması). |
-| **Turnuva + yumuşak ölüm** | k-turnuva üreme (yalnız en fit değil) + olasılıksal eleme çeşitliliği korur; tohumlanan altyapı soyları (colony/supervisor/explorer) elemeden muaf. |
+| **Turnuva + yumuşak ölüm** | k-turnuva üreme (yalnız en fit değil) + olasılıksal eleme çeşitliliği korur; tohumlanan altyapı soyları (colony/supervisor/explorer/synth) tekil: elemeden muaf ve hiçbir sürücü ikinci kopyasını büyütemez. |
 | **Rule-DSL / genetik programlama** | bir `rule` organının genomu tipli kural listesidir — `when <stimulus> if <field> <op> <value> then <report\|log\|emit\|act>`. Mutasyon yapıyı yeniden yazar, crossover iki ebeveyni birleştirir. Gramer **yalnız güvenli primitifler** üretir (`os`/`io` yok) → yapısal **capability-isolation**. |
 | **Quality-Diversity (MAP-Elites)** | davranış arşivi her niş için en iyi organı tutar (birincil uyaran × abonelik genişliği); hücre elitleri korunur, üreme boş nişleri *aydınlatır* — tek tepe yerine **yetkinler repertuarı**. |
 | **Öz-uyarlanan (ES) mutasyon** | her sayısal gen kendi log-normal mute edilen adım boyunu (`sigma`) taşır, nesiller boyu kalıtılır. |
@@ -238,9 +238,10 @@ varsayılan yedek olarak kalır. Açılışta (`--brain auto`, varsayılan) `cor
 3. yoksa makinedeki, türü ne olursa olsun, varsayılandan büyük, sığan (fiziksel RAM'in
    `model_ram_share` payı, varsayılan %25; isteğe bağlı `model_max_mb` tavanı), geri çekilmemiş
    ve yüklenebilen **en büyük** beyin;
-4. yoksa anahtarsız açık uç; yoksa varsayılan; o da yoksa kurallar.
+4. yoksa varsayılan (indirilmiş `decision.gguf`, ya da `embed_smol` build'inde gömülü model); varsayılan
+   yoksa ya da yüklenemezse anahtarsız açık uç; o da yoksa kurallar.
 
-**Failover:** art arda üç çevrimiçi hata (ağ engeli, kota, kesinti; `401/402/403` hemen) servisi
+**Failover:** art arda üç çevrimiçi hata (ağ engeli, kota, kesinti; `401/402/403` ve `429` hemen) servisi
 geri çekilme penceresine alır; bu sürede çağrılar doğrudan yerel beyne düşer. Model yöneticisi
 yüklü yerel beyin yoksa birini yükler (makinedeki beyin, yoksa varsayılan), servisi model-kontrol
 kadansında yoklar ve yanıt verince geri döner — yerel modelin RAM'ini bırakır. Hiçbir yerde
@@ -290,8 +291,10 @@ colony/     peers/<id> (mesh eşleri için addr=) · inbox/<id>/ · clone.lock
 ## CLI bayrakları (seçme)
 
 ```
+--mode <free|directed>     yaşam modu (varsayılan: free)
 --goal "<text>"            direktifli mod (--mode directed ima eder)
---ticks <n> / --tick-seconds <s>   sınırlı koşu / tick hızı
+--ticks <n>                n tick koş, sonra dinlen (varsayılan: sonsuz)
+--tick-seconds <s>         tick başına saniye (hızlı demo için 0.2)
 --brain <tür>              karar beyni: auto|rules|remote|gguf|embedded|service|apple (varsayılan: auto)
 --autonomy <lvl>           otonomi tavanı: learn|report|notify|suggest|act (varsayılan: report)
 --unattended               kendi başına davran + onaysız daha iyi model indir
@@ -311,13 +314,16 @@ colony/     peers/<id> (mesh eşleri için addr=) · inbox/<id>/ · clone.lock
 --clone-generalist         klonlar generic kopya (amaç kristalleşmesini atla)
 --purpose-mode <m>         amaç seçimi: explore|exploit|portfolio
 --no-purpose-learn         S4'ü kapat (amaçları ödüle göre yanlamayı bırak)
---no-colony / --no-supervisor / --no-explorer / --no-rule   ilgili organı tohumlama
+--clone-max-peers <n>      eşzamanlı canlı örnek tavanı (varsayılan: 3)
+--clone-generations <n>    klon derinliği tavanı, kök=0 (varsayılan: 1)
+--no-colony / --no-supervisor / --no-explorer / --no-rule   ilgili organı hiç büyütme
+--no-explore-expand        keşfet ama algıyı otomatik genişletme (watch dizin/log ekleme)
 --explore-root <path>      explorer'ın dolaşacağı bir dizin ekle (tekrarlanabilir)
 ```
 
 Beyin env: `EVOLUA_LLM_API`, `EVOLUA_LLM_MODEL`, `EVOLUA_LLM_BASE` (proxy/test taban URL'si),
 `EVOLUA_LLM_CTX` (yerel bağlam, varsayılan 4096), `EVOLUA_MODEL` (açık GGUF), `EVOLUA_BRAIN`.
-Süpervizör env: `EVOLUA_WATCHDOG` (0=kapalı), `_SECS`, `_STALL`, `_KILL` (opt-in son-çare çıkış).
+Süpervizör env: `EVOLUA_WATCHDOG` (0=kapalı), `_SECS`, `_STALL`, `_KILL` (opt-in son-çare çıkış), `_KILL_SECS`.
 Mesh env: `EVOLUA_MESH`, `EVOLUA_MESH_PORT`, `EVOLUA_MESH_SEEDS`, `EVOLUA_MESH_TOKEN`.
 
 ---
@@ -335,7 +341,8 @@ Mesh env: `EVOLUA_MESH`, `EVOLUA_MESH_PORT`, `EVOLUA_MESH_SEEDS`, `EVOLUA_MESH_T
 `autonomy_ceiling` merdiveni keser. Yıkıcı aksiyonlar (kill) **her zaman** onay ister.
 **Evrilen organlar** (rule-DSL `act`) daha da muhafazakâr sınırlanır — `evolved_action_ceiling`
 varsayılanı `suggest`, yani istekleri global tavandan bağımsız olarak onay kutusuna gider, asla
-otonom değil. Onay bir dosya dansıdır. Her karar/aksiyon `state/audit.log`'a yazılır.
+otonom değil. Onay bir dosya dansıdır: `approvals/pending-<id>.md` dosyasını `approved/` içine taşı
+(uygulanır, `done/` altına arşivlenir), reddetmek için sil. Her karar/aksiyon `state/audit.log`'a yazılır.
 
 Varsayılan tavan **`report`**: organizma yalnızca rapor yazar. `--autonomy suggest` önerilen
 aksiyonları (ve model yükseltmelerini) onay kutusuna gönderir. Gözetimsiz çalışma **opt-in**'dir:

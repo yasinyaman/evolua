@@ -5,14 +5,14 @@ processes, how it decides *when* to divide, how a host-side supervisor watches i
 aimless node **acquires purpose** and births specialized offspring. Everything here is added
 without touching the immutable `lua/core/` kernel — the colony and supervisor are ordinary
 **organs** grown from genome blueprints in `lua/core/templates.lua` — except the host-side
-supervisor thread, which is the single deliberate exception (see below).
+threads (the supervisor, and the mesh nerve with `--mesh`), the deliberate exceptions (see below).
 
 ## 1. The colony — communication first
 
 A single seeded `colony` organ gives the organism a sense of **siblings**. It needs no core
 changes; it is seeded once by `main.lua` (idempotent across lives) and is a **protected
-singleton**: exempt from culling, never copied by mutation, illumination or the bandit, and
-re-rendered from its blueprint each life so blueprint fixes reach it.
+singleton** (like supervisor, explorer and synth): exempt from culling, never copied by mutation,
+illumination or the bandit, and re-rendered from its blueprint each life so blueprint fixes reach it.
 
 Two behaviors, both via a shared filesystem dir `$EVOLUA_HOME/colony/`:
 
@@ -56,7 +56,8 @@ same two directories over the network.
   Remote peers count toward the colony census (`clone_max_peers` is therefore colony-wide).
 - **Open by design**, like the rest of the organism; `EVOLUA_MESH_TOKEN` adds a shared-secret check
   on beacons and mail when an operator wants one. Env equivalents: `EVOLUA_MESH=1`,
-  `EVOLUA_MESH_PORT`, `EVOLUA_MESH_SEEDS=host:port,…`, `EVOLUA_MESH_BEACON_SECS`.
+  `EVOLUA_MESH_PORT`, `EVOLUA_MESH_SEEDS=host:port,…`, `EVOLUA_MESH_BEACON_SECS`, `EVOLUA_MESH_GATEWAY=1`
+  (serve as a gateway), `EVOLUA_MESH_FORCE_GATEWAY=1` (testing: tunnel even when online).
 
 **Capabilities travel in the beacon** — and that is what lets a mesh *specialise*. Every node
 writes `state/mesh_caps` (the model manager keeps it current: `brain=…`, `online=0|1`, and — when
@@ -88,8 +89,9 @@ the same day, first with two nodes on one host (`--mesh-port 7811 --mesh-seed 12
 the reverse), then Mac ↔ GB10 over Tailscale: a gene-pool entry planted on the Mac (`cpu_guard`,
 `fitness 77`) and the Mac's `outcomes/mac-node` (a `--goal "report errors"` member) were on gb10
 four seconds after discovery (`sync: genepool/cpu_guard received`), and gb10's `supervisor` genome
-and `outcomes/gb10-node` arrived on the Mac in the same round. A peer whose beacon is older than
-60 s is no longer contacted (its file is pruned by `peer_ttl`).
+and `outcomes/gb10-node` arrived on the Mac in the same round. Two thresholds govern a vanished peer:
+the nerve stops contacting a peer whose beacon is older than 60 s (`PEER_STALE_SECS` in
+`src/mesh.rs`), and the organ's own census drops it after its `peer_ttl` gene (default 30 s).
 
 The organ listens on the real clock (`self.heartbeat`) but its template `triggers` field is the
 synthetic `"colony.tick"` (never emitted), so the free drive never picks it. The guarantee that
@@ -254,8 +256,9 @@ no `load`). Tunables: `hgt`, `hgt_min_fitness`, `hgt_margin`, `hgt_every`.
 
 ## 4. The host-side supervisor (the "brainstem")
 
-The one deliberate exception to "all behavior lives in Lua": a background thread the Rust host
-spawns before running the organism (`supervisor::spawn` in `src/supervisor.rs`). Because mlua
+The first deliberate exception to "all behavior lives in Lua" (the mesh nerve is the second): a
+background thread the Rust host spawns before running the organism (`supervisor::spawn` in
+`src/supervisor.rs`). Because mlua
 runs the organism in-process on the main thread (and blocks there), this watch lives on its own
 thread and talks to the organism the only way it can across that boundary — through the
 filesystem.
@@ -279,8 +282,8 @@ It is **supervision, not control**:
 
 - **Liveness** — it watches `state/heartbeat` (beaten each tick by the Lua `supervisor` organ),
   falling back to the log's mtime. If it goes stale, it logs a warning to `state/supervisor.log`.
-- **Vitals** — it writes coarse facts the organism can't cheaply see about itself (`stall`,
-  `self_rss_mb`, `colony_procs`) to `state/vitals`. The Lua organ reads them back and emits a
+- **Vitals** — it writes coarse facts the organism can't cheaply see about itself (`at`, `stall`,
+  `heartbeat_age`, `self_rss_mb`, `colony_procs`, one `key=value` per line) to `state/vitals`. The Lua organ reads them back and emits a
   `host.vitals` stimulus so the *evolvable* layer decides what to do.
 
 The host never caps, kills, or steers evolution. The single hard reflex — process exit on a
@@ -322,8 +325,9 @@ flowchart LR
 
 - **Modalities** (round-robin each probe): filesystem directories, `*.log` files, listening
   network ports (`lsof`/`netstat`), **installed commands/tools** (a `$PATH` scan — "what can this
-  host do?", flagging notable tools like `git`/`docker`/`python`/compilers), and system facts
-  (`uname`). Each emits an `env.discovery` stimulus (reported for observability).
+  host do?", flagging notable tools like `git`/`docker`/`python`/compilers), **decision brains**
+  already on the host (GGUFs, once; `explore_models`), and system facts (`uname`). Each emits an
+  `env.discovery` stimulus (reported for observability).
 - **Perception expansion** is the point: a discovered dir/log is appended to `cfg.watch_dirs` /
   `cfg.watch_logs`. Because `fswatch`/`logwatch` re-read those lists every tick, the organism
   starts perceiving the new target immediately — it **grows its senses toward what it finds**.
@@ -343,7 +347,8 @@ $EVOLUA_HOME/colony/
   inbox/<id>/<msg>      per-recipient mailboxes (sender id embedded in the message; *.net*.msg arrived over the mesh)
   clone.lock            colony-wide replication cooldown
   lineage.log           purpose ledger: <tick> <child-id> gen=<n> purpose: <goal> [why]
-  outcomes/<id>         S4 harvest: purpose=<goal> payoff=<n> (one per purpose-directed member)
+  outcomes/<id>         S4 harvest: purpose=<goal> payoff=<n> (one per purpose-directed member; gossiped over the mesh)
+  genepool/<template>   horizontal gene transfer: the fittest flat genome per template (fitness + genes + sigma; gossiped)
   children/<id>/        each clone's own sub-home (its own plugins/state/reports)
 ```
 
@@ -362,6 +367,9 @@ All in `config.lua` (overridable by CLI flags):
 | `clone_require_pressure` | true | split only under load (`--clone-eager` = false) |
 | `clone_ignore_battery` | false | allow spawning on battery (`--clone-ignore-battery`) |
 | `clone_min_ram_mb` | 200 | minimum available RAM to host a child |
+| `clone_need_events` | 1 | demand: this many chronically unhandled stimuli count as load |
+| `clone_hot_entities` | 1 | demand: this many hot/erroring processes count as load |
+| `clone_fallback_rate` | nil | demand: reasoner rule-fallback rate above which the brain is a bottleneck (nil = `model_fallback_rate`) |
 | `purpose_enabled` | true | offspring born specialized (`--clone-generalist` = false) |
 | `purpose_mode` | portfolio | `explore` \| `exploit` \| `portfolio` (used when `purpose_learn` is off) |
 | `purpose_map` | (table) | stimulus → child goal (explore) |
@@ -376,3 +384,16 @@ All in `config.lua` (overridable by CLI flags):
 | `explore_tools` | true | include installed-command discovery (`$PATH` scan) |
 | `notable_tools` | (list) | tools flagged when present during the PATH scan |
 | `explore_roots` | {home, cwd} | where the explorer may wander (`--explore-root` adds) |
+| `explore_models` | true | report decision brains already on the host |
+| `hgt` | true | horizontal gene transfer through `colony/genepool/` |
+| `hgt_min_fitness` | 3 | publish my fittest organ's genome only above this fitness |
+| `hgt_margin` | 2 | adopt a peer genome only if it beats my local best by this much |
+| `hgt_every` | 6 | adoption cadence multiplier (× the organ's `link_every` gene) |
+| `mesh` | false | bridge the colony across hosts (`--mesh`) |
+| `mesh_port` | 7707 | mesh UDP/TCP port |
+| `mesh_seeds` | nil | peers to beacon to directly (`--mesh-seed`, repeatable) |
+| `mesh_share_brain` | true | advertise a locally served model endpoint to peers |
+| `mesh_use_peer_brain` | true | think through a peer's served model when brainless |
+| `mesh_gateway` | false | serve as an internet gateway for peers (`--mesh-gateway`) |
+| `mesh_use_gateway` | true | tunnel online calls through a peer gateway when offline |
+| `mesh_force_gateway` | false | testing: use a peer gateway even when online |
