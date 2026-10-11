@@ -1275,13 +1275,32 @@ RULES:
         for _, w in ipairs(h) do if not tonumber((w:gsub("[%%,]", ""))) then words = words + 1 end end
         if words >= #h - 1 then header = h end
       end
-      return { ncol = ncol, header = header }
+      -- a data value per column (the first full-width line after the header), so the map can
+      -- warn about units: tonumber("94%") and tonumber("3.0Gi") are nil, the classic silent organ
+      local sample
+      for i = header and 2 or 1, #lines do
+        local f = fields(lines[i])
+        if #f == ncol then sample = f; break end
+      end
+      return { ncol = ncol, header = header, sample = sample }
     end
     local function column_map(shape)
       if not shape or not shape.header then return nil end
-      local parts = {}
-      for i, h in ipairs(shape.header) do parts[#parts + 1] = string.format("%d=%s", i, h) end
-      return table.concat(parts, " ")
+      local parts, units = {}, {}
+      for i, h in ipairs(shape.header) do
+        parts[#parts + 1] = string.format("%d=%s", i, h)
+        local v = shape.sample and shape.sample[i]
+        -- a number wearing a unit or a percent sign: 94%, 3.0Gi, 512M, 1.2k
+        if v and v:match("^%d[%d%.,]*%a+$") or (v and v:match("^%d[%d%.,]*%%$")) then
+          units[#units + 1] = string.format("f[%d] looks like %s", i, v)
+        end
+      end
+      local out = table.concat(parts, " ")
+      if #units > 0 then
+        out = out .. string.format(". UNITS: %s — tonumber() returns nil on these; strip the unit first: tonumber((v:gsub(\"[^%%d%%.]\", \"\")))",
+          table.concat(units, ", "))
+      end
+      return out
     end
 
     local function sample_commands(brief, key)
@@ -1522,6 +1541,13 @@ RULES:
       end
       table.sort(fields)
       if #fields > 0 then parts[#parts + 1] = "used fields " .. table.concat(fields, ",") end
+      -- how it turns a field into a number is part of the approach: the same command and the
+      -- same split, but with the unit stripped before tonumber(), is a different (often the
+      -- right) organ — tonumber("94%") is nil and leaves an organ silent forever
+      if src:find("tonumber") then
+        parts[#parts + 1] = (src:find("gsub%s*%(%s*\"[^\"]*[%%%%%%a]") or src:find("tonumber%s*%(%s*%(?[%w_%.%[%]]+:gsub"))
+          and "stripped units before tonumber" or "tonumber on raw fields (units/percent signs kept)"
+      end
       parts[#parts + 1] = src:find("handled%s*=%s*true") and "returned handled=true" or "never returned handled=true"
       parts[#parts + 1] = src:find("bus:emit") and "emitted its own stimulus" or "emitted nothing"
       return table.concat(parts, "; ")
@@ -1615,8 +1641,28 @@ RULES:
               local i = 0
               for line in (code .. "\n"):gmatch("([^\n]*)\n") do i = i + 1; if i == ln then culprit = line; break end end
             end
-            code, why = nil, "it ran but threw: " .. tostring(whyr) ..
-              (culprit ~= "" and ("\n    failing line " .. ln .. ": " .. culprit) or "") ..
+            -- the specific lesson for the specific slip, before the general reminders: a 7B
+            -- model repeats `table.find` three times in a row when only told "no table.find"
+            local lesson = ""
+            local w = tostring(whyr)
+            local fld = w:match("attempt to call a nil value %(field '([%w_]+)'%)")
+            if fld then
+              lesson = string.format("\n    `%s` is NOT a Lua function — the standard library has no table.%s / string.%s. Write the loop yourself: `local found = false; for _, v in ipairs(t) do if v == x then found = true; break end end`.", fld, fld, fld)
+            elseif w:find("attempt to call a nil value") then
+              lesson = "\n    you called something that does not exist (a misspelled local, an invented library function). Use only string.*, table.insert/remove/concat/sort, math.*, os.*, io.*."
+            elseif w:find("bad argument #2 to 'tonumber'") then
+              lesson = "\n    `tonumber(s:gsub(...))` passes gsub's SECOND return value (the count) as the base — write `tonumber((s:gsub(...)))` with the extra parentheses."
+            elseif w:find("attempt to compare") then
+              lesson = "\n    a value you compared is nil (a pattern matched nothing, or tonumber() got a value with a unit like 94%% / 3.0Gi) — guard with `if not v then return false end` and strip units before tonumber()."
+            elseif w:find("attempt to index a number") or w:find("attempt to index a nil") then
+              lesson = "\n    you indexed a value that is not a table: ev.data fields are plain values unless the payload shows them as {…}; `line:match(pat)` returns captures as separate values, not a table."
+            elseif w:find("bad argument #%d+ to 'format'") then
+              lesson = "\n    string.format got a nil or a table where it expected a number/string — every %%d / %%s argument must be checked (`v or 0`) before formatting."
+            elseif w:find("attempt to concatenate") then
+              lesson = "\n    `..` got nil or a table — tostring() it, or check the field exists."
+            end
+            code, why = nil, "it ran but threw: " .. w ..
+              (culprit ~= "" and ("\n    failing line " .. ln .. ": " .. culprit) or "") .. lesson ..
               "\nRemember: gsub returns two values; read a handle fully before close(); one variable per capture; no table.find/contains; a field that prints as table: is a TABLE."
             ctx.log:debug("✎ [%s] dry run failed (%ds): %s", SELF, os.time() - t1, tostring(whyr))
           end
@@ -1708,6 +1754,8 @@ RULES:
                   why = string.format("earned no fitness in %d ticks: it watched stimuli that never fire (%s)", age, table.concat(silent, ", "))
                 elseif not src:find("handled%s*=%s*true") then
                   why = string.format("earned no fitness in %d ticks: its handlers never return { handled = true }", age)
+                elseif src:find("tonumber") and not (src:find("gsub%s*%(%s*\"[^\"]*[%%%%%%a]") or src:find("tonumber%s*%(%s*%(?[%w_%.%[%]]+:gsub")) then
+                  why = string.format("earned no fitness in %d ticks: it never reported a change. It calls tonumber() on raw fields — a value like 94%% or 3.0Gi makes tonumber return nil, so every comparison is nil == nil and nothing is ever reported. Strip the unit first: tonumber((v:gsub(\"[^%%d%%.]\", \"\")))", age)
                 else
                   why = string.format("earned no fitness in %d ticks: its handlers fired but did nothing the organism values (echoing payloads is worthless; sense and report real anomalies)", age)
                 end
