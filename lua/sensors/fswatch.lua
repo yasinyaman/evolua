@@ -1,24 +1,15 @@
 -- sensors/fswatch.lua — perceive filesystem changes in watched dirs
--- Snapshots (name -> mtime/size) and diffs each pass. Emits:
+-- Snapshots (path -> mtime:size) and diffs each pass. Emits:
 --   fs.change { kind=created|modified|deleted, path }
--- Pure Lua + `ls`/`stat` via io.popen; no luafilesystem dependency.
+-- Listing goes through core/platform (host binding in the binary, quoted
+-- `find` in plain Lua), so a watched path is never spliced into a command.
+
+local P = require("core.platform")
 
 local function snapshot(dir)
   local snap = {}
-  local p = io.popen and io.popen('find "' .. dir .. '" -maxdepth 2 -type f -printf "%p\\t%T@\\t%s\\n" 2>/dev/null')
-  if not p then return snap end
-  for line in p:lines() do
-    local path, mtime, size = line:match("^(.-)\t([%d%.]+)\t(%d+)$")
-    if path then snap[path] = (mtime or "") .. ":" .. (size or "") end
-  end
-  p:close()
-  -- BSD/macOS find lacks -printf; fall back to a plain listing if empty
-  if next(snap) == nil then
-    local q = io.popen and io.popen('ls -1 "' .. dir .. '" 2>/dev/null')
-    if q then
-      for f in q:lines() do snap[dir .. "/" .. f] = "?" end
-      q:close()
-    end
+  for _, e in ipairs(P.walk(dir, { depth = 2, kind = "file", limit = 5000 })) do
+    snap[e.path] = tostring(e.mtime) .. ":" .. tostring(e.size)
   end
   return snap
 end

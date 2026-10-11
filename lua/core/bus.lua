@@ -3,6 +3,8 @@
 -- subscribe and react. Subscriptions are fully dynamic: behavior can change
 -- at runtime as plugins are born, mutated, or retired.
 
+local clock = require("core.platform").clock   -- wall-clock in the binary, CPU time in plain Lua
+
 local Bus = {}
 Bus.__index = Bus
 
@@ -53,7 +55,10 @@ function Bus:emit(t, payload)
     if self.log then self.log:warn("bus: emit-depth cap on '%s' — breaking a possible emit loop", t) end
     return 0
   end
-  local ev = { type = t, data = payload or {}, at = os.time() }
+  -- the organ whose reactor is running right now emitted this (nil = a sensor or
+  -- core). Tracked by the bus itself, so an organ can't claim to be someone else.
+  local emitter = self._reactor
+  local ev = { type = t, data = payload or {}, at = os.time(), emitter = emitter }
   local s = stat(self, t)
   s.fired = s.fired + 1
 
@@ -68,8 +73,12 @@ function Bus:emit(t, payload)
   --           worth more than re-handling a metronome (heartbeat → streak 0).
   --   share = a stimulus's credit is split across its co-handlers (#10): a lone
   --           handler of a real need outranks one of N riders on the same event.
-  --   cost  = measured reactor CPU time is subtracted (#5 parsimony): a pricey
-  --           reactor can't out-earn a lean one doing the same job.
+  --   cost  = measured reactor time is subtracted (#5 parsimony): a pricey
+  --           reactor can't out-earn a lean one doing the same job. Wall-clock
+  --           in the binary, so shelling out to find/ps/lsof is charged too.
+  --   self  = an organ earns nothing for handling a stimulus it emitted itself
+  --           (the supervisor emitting host.vitals every tick and then handling
+  --           it would otherwise mint its own fitness, like the old res.reward).
   -- The organ's res.reward is carried only as telemetry (`hint`), never fitness.
   local cfg    = self.cfg or {}
   local base   = cfg.reward_base or 1
@@ -83,16 +92,19 @@ function Bus:emit(t, payload)
   local list = self.subs[t]
   if list then
     for _, h in ipairs(list) do
-      local t0 = os.clock()
+      local outer = self._reactor
+      self._reactor = h.owner
+      local t0 = clock()
       local ok, res = pcall(h.fn, ev)
-      local cost = os.clock() - t0
+      local cost = clock() - t0
+      self._reactor = outer
       if not ok then
         if self.log then self.log:warn("reactor '%s' errored on '%s': %s", h.owner, t, tostring(res)) end
         -- a throwing reactor emits a self-stimulus the organism can react to
         self:emit_raw("self.error", { owner = h.owner, on = t, err = tostring(res) })
       elseif res == true or (type(res) == "table" and res.handled) then
         handled = handled + 1
-        if h.owner then
+        if h.owner and h.owner ~= emitter then
           claimed[#claimed + 1] = { owner = h.owner, cost = cost,
             hint = (type(res) == "table" and res.reward) or nil }
         end

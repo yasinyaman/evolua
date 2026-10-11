@@ -1,9 +1,9 @@
 # EvoLua — Build Plan
 
 > **Status: all five phases implemented.** The Lua side was verified over the bridge with real
-> perception + timing; the Rust side (`main.rs`, `supervisor.rs`, `llm.rs`, `acquire.rs`) was
+> perception + timing; the Rust side (`main.rs`, `supervisor.rs`, `brain.rs`, `llm.rs`, `remote.rs`, `acquire.rs`, `mesh.rs`) was
 > written to the proven mlua pattern and built/tested with a native `cargo build`. Phase 5
-> (colony / supervisor / purpose / exploration) was verified with bounded runs (25/25 green —
+> (colony / supervisor / purpose / exploration) was verified with bounded runs (27/27 green —
 > `docs/TESTING.md`). Design rationale: `docs/ROADMAP.md` · deep-dive: `docs/COLONY.md`.
 
 ## Phase 0 — Setup
@@ -22,8 +22,8 @@
 
 ## Phase 2 — Decision brain + sense-making
 - [x] Cargo `llm` feature + `src/llm.rs` (llama-cpp-2 CPU, single-shot)
-- [x] Embedded SmolLM2-135M (`embed_smol`) + resolver (`--model` > env > disk > embed)
-- [x] `llm_complete(system,user,max)` host binding (main.rs, feature-gated)
+- [x] Embedded SmolLM2-135M (`embed_smol`, opt-in) + the brain order in `core/brain.lua` (`$EVOLUA_MODEL` / `--model` > online with a key > machine brain > default on disk / embedded > keyless > rules)
+- [x] `host_brain_*` bindings (`src/brain.rs`); `core/brain.lua` sets `llm_complete(system,user,max)` once a brain loads
 - [x] `lua/core/reasoner.lua` — whole-system snapshot → strict decision schema
 - [x] Strict parse + rule fallback (garbage/missing/invalid → fall back to rules)
 - [x] `lua/core/rag.lua` — fitness-weighted BM25 experience bank
@@ -53,11 +53,11 @@
 - [x] Purpose selection S4 — `colony/outcomes/` harvest + bandit over goals (proven payoff)
 - [x] `templates.lua` `explorer` organ — fs/log/port/command(`$PATH`)/sys discovery + perception expansion
 - [x] `src/supervisor.rs` — host-side autonomic watch (liveness + vitals, never enforces)
-- [x] Test — `docs/TESTING.md` 25/25 green (T0–T10)
+- [x] Test — `docs/TESTING.md` 27/27 green (T0–T11)
 
 ## Cross-cutting
 - [x] README + ROADMAP + COLONY + TESTING + BUILD-PLAN up to date (all in English)
-- [x] `.gitignore` — `target/`, `models/`, `approvals/`, `audit.log`; `LICENSE` (MIT)
+- [x] `.gitignore` — `target/`, `models/`, `approvals/`, `state/` (incl. `audit.log`), `keys/`, generated organs; `LICENSE` (MIT)
 - [x] First native `cargo build` — compiled and run (supervisor + all organs)
 - [ ] Live verification on a Windows VM (after cargo build)
 

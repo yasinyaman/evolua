@@ -11,6 +11,7 @@
 // creates it, and hands it to the organism as the global `EVOLUA_HOME`. That is
 // where the organism keeps the plugins it grows, its reports, and its memory.
 
+use std::borrow::Cow;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -22,11 +23,51 @@ use rust_embed::RustEmbed;
 mod llm;
 #[cfg(feature = "acquire")]
 mod acquire;
+#[cfg(all(feature = "apple", target_os = "macos"))]
+mod apple;
+mod brain;
+mod discover;
+mod host;
+mod mesh;
+mod netproxy;
+#[cfg(feature = "remote")]
+mod remote;
+#[cfg(feature = "service")]
+mod service;
 mod supervisor;
 
+// Only the organism's SOURCE is embedded: core/, sensors/, config.lua, main.lua.
+// A plain-Lua run keeps its runtime artifacts under lua/ (plugins/, state/,
+// reports/, …); those must never be compiled as modules (state/memory.lua is a
+// bare table, not a chunk) nor shipped inside a release binary.
 #[derive(RustEmbed)]
-#[folder = "lua/"]
-struct LuaSrc;
+#[folder = "lua/core/"]
+#[prefix = "core/"]
+struct CoreSrc;
+
+#[derive(RustEmbed)]
+#[folder = "lua/sensors/"]
+#[prefix = "sensors/"]
+struct SensorSrc;
+
+const CONFIG_LUA: &str = include_str!("../lua/config.lua");
+const MAIN_LUA: &str = include_str!("../lua/main.lua");
+
+/// (path, source) for every embedded module except main.lua.
+fn embedded_modules() -> Vec<(String, Cow<'static, [u8]>)> {
+    let mut out = vec![("config.lua".to_string(), Cow::Borrowed(CONFIG_LUA.as_bytes()))];
+    for p in CoreSrc::iter() {
+        if let Some(f) = CoreSrc::get(&p) {
+            out.push((p.into_owned(), f.data));
+        }
+    }
+    for p in SensorSrc::iter() {
+        if let Some(f) = SensorSrc::get(&p) {
+            out.push((p.into_owned(), f.data));
+        }
+    }
+    out
+}
 
 /// Pick a writable home for the organism's body parts & memory.
 /// Priority: $EVOLUA_HOME → OS data dir/EvoLua → ./evolua-data (last resort).
@@ -68,6 +109,14 @@ fn run() -> mlua::Result<()> {
     // observes the organism's liveness + vitals and writes them to <state>/vitals
     // for the Lua side to react to. Soft by design — it never steers evolution.
     supervisor::spawn(home.clone());
+    // 1c) MESH (opt-in): the nerve that lets organisms on other hosts find this one and
+    // exchange colony mail — transport only, the colony organ keeps its file protocol.
+    {
+        let argv: Vec<String> = env::args().skip(1).collect();
+        if let Some(mcfg) = mesh::config_from(&argv, &home) {
+            mesh::spawn(home.clone(), mcfg);
+        }
+    }
 
     // 2) Lua VM
     let lua = Lua::new();
@@ -86,27 +135,24 @@ fn run() -> mlua::Result<()> {
     }
     globals.set("arg", arg_tbl)?;
 
-    // 3b) decision brain (Faz 2) — resolve & expose llm_complete(system,user,max?)
-    // If no model resolves (or the feature is off), the global is absent and the
-    // Lua reasoner falls back to rule-based reasoning.
-    #[cfg(feature = "llm")]
-    {
-        if let Some(brain) = llm::Brain::resolve(&home, 2048) {
-            let f = lua.create_function(
-                move |_, (system, user, max_tokens): (String, String, Option<usize>)| {
-                    match brain.complete(&system, &user, max_tokens.unwrap_or(192)) {
-                        Ok(s) => Ok(Some(s)),
-                        Err(e) => {
-                            eprintln!("llm_complete error: {e}");
-                            Ok(None)
-                        }
-                    }
-                },
-            )?;
-            globals.set("llm_complete", f)?;
-            globals.set("EVOLUA_HAS_LLM", true)?;
-        }
-    }
+    // 3a) native filesystem helpers (host_list_dir / host_walk / host_mkdir /
+    // host_cwd) so perception doesn't build shell commands out of path names.
+    // core/platform.lua uses them when present, the shell otherwise.
+    host::register(&lua)?;
+
+    // 3b) decision brain — host_brain_kinds / _load / _complete / _info. Nothing
+    // is loaded here: core/brain.lua picks the brain at boot (an explicit model,
+    // else a bigger usable one already on the machine, else the organism's own
+    // default — downloaded or embedded) and points the reasoner's llm_complete at it.
+    // With no backend compiled in, the reasoner falls back to rules.
+    brain::register(&lua, home.clone())?;
+
+    // 3b-bis) outbound proxy (mesh gateway): net_proxy_set(url) / net_proxy_clear() /
+    // net_proxy(). The model manager points it at a peer's CONNECT proxy when this
+    // node has no internet; the online brain and the downloader honour it.
+    globals.set("net_proxy_set", lua.create_function(|_, url: String| { netproxy::set(Some(url)); Ok(()) })?)?;
+    globals.set("net_proxy_clear", lua.create_function(|_, ()| { netproxy::set(None); Ok(()) })?)?;
+    globals.set("net_proxy", lua.create_function(|_, ()| Ok(netproxy::get()))?)?;
 
     // 3c) model acquisition (Faz 4) — expose model_acquire(url, dest, sha256?).
     // The Lua model manager calls this only after the autonomy ladder approves
@@ -127,30 +173,20 @@ fn run() -> mlua::Result<()> {
         globals.set("model_acquire", f)?;
     }
 
-    // 4) register every embedded module into package.preload, except main.lua
+    // 4) register every embedded module into package.preload (main.lua runs below)
     let package: Table = globals.get("package")?;
     let preload: Table = package.get("preload")?;
-    let mut main_body: Option<Vec<u8>> = None;
-    for path in LuaSrc::iter() {
-        let p = path.as_ref();
+    for (p, data) in embedded_modules() {
         if !p.ends_with(".lua") {
             continue;
         }
-        let file = LuaSrc::get(p).expect("embedded file");
-        if p == "main.lua" {
-            main_body = Some(file.data.into_owned());
-            continue;
-        }
         let chunk_name = format!("@{}", p);
-        let func = lua
-            .load(&*file.data)
-            .set_name(&chunk_name)
-            .into_function()?;
-        preload.set(module_name(p), func)?;
+        let func = lua.load(&*data).set_name(&chunk_name).into_function()?;
+        preload.set(module_name(&p), func)?;
     }
 
     // 5) breathe life into it
-    let mut body = main_body.ok_or_else(|| mlua::Error::RuntimeError("embedded main.lua missing".into()))?;
+    let mut body = MAIN_LUA.as_bytes().to_vec();
     // The standalone `lua` CLI skips a leading shebang (#!) line; mlua's loader
     // does not. main.lua carries one for plain-`lua` execution, so strip it here
     // (keep the newline to preserve line numbers in any error messages).
@@ -167,5 +203,38 @@ fn main() {
     if let Err(e) = run() {
         eprintln!("EvoLua fatal: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{embedded_modules, module_name, resolve_home};
+
+    #[test]
+    fn module_names_follow_require_paths() {
+        assert_eq!(module_name("core/kernel.lua"), "core.kernel");
+        assert_eq!(module_name("sensors/fswatch.lua"), "sensors.fswatch");
+        assert_eq!(module_name("config.lua"), "config");
+        assert_eq!(module_name(r"core\kernel.lua"), "core.kernel");
+    }
+
+    #[test]
+    fn only_organism_source_is_embedded() {
+        let paths: Vec<String> = embedded_modules().into_iter().map(|(p, _)| p).collect();
+        for want in ["config.lua", "core/kernel.lua", "core/serialize.lua", "sensors/fswatch.lua"] {
+            assert!(paths.iter().any(|p| p == want), "missing {want}");
+        }
+        for p in &paths {
+            assert!(p == "config.lua" || p.starts_with("core/") || p.starts_with("sensors/"), "unexpected {p}");
+        }
+    }
+
+    #[test]
+    fn evolua_home_overrides_the_os_default() {
+        // the only test that touches EVOLUA_HOME, so no other test races it
+        std::env::set_var("EVOLUA_HOME", "/tmp/evolua-test-home");
+        assert_eq!(resolve_home(), std::path::PathBuf::from("/tmp/evolua-test-home"));
+        std::env::remove_var("EVOLUA_HOME");
+        assert_ne!(resolve_home(), std::path::PathBuf::from("/tmp/evolua-test-home"));
     }
 }

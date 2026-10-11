@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EvoLua — a self-evolving Lua organism</title>
+<meta name="description" content="EvoLua perceives its host, builds a world model, reasons with whatever brain it can reach, grows its own Lua organs under honest selection, replicates into a colony across machines, and ships as one small binary.">
+<meta property="og:title" content="EvoLua — a self-evolving Lua organism">
+<meta property="og:description" content="Rust host, embedded Lua organism, single binary. It grows its own organs, finds its own brain, and replicates into a colony.">
+<meta property="og:image" content="https://yaman.dev/evolua/assets/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="./">Evo<b>Lua</b></a>
+  <nav class="nav">
+    <a href="#what">What it does</a>
+    <a href="#brain">Brain</a>
+    <a href="#colony">Colony</a>
+    <a href="#start">Quick start</a>
+    <a href="#docs">Docs</a>
+    <a href="readme.tr.html">🇹🇷 Türkçe</a>
+    <a href="https://github.com/yasinyaman/evolua">GitHub</a>
+  </nav>
+</div></header>
+
+<main class="wrap">
+  <section class="hero">
+    <div>
+      <div class="kicker">Rust + embedded Lua · single binary</div>
+      <h1>Evo<b>Lua</b></h1>
+      <p class="lead">A self-evolving digital organism. It perceives the machine it runs on, makes sense of what it sees, grows its own plugins under honest selection pressure, finds its own brain, and replicates into a colony — then reports back.</p>
+      <div class="tags">
+        <span class="tag">perceive</span><span class="tag">evolve organs</span><span class="tag">think</span>
+        <span class="tag">replicate</span><span class="tag">acquire purpose</span><span class="tag">explore</span><span class="tag">synthesize</span>
+      </div>
+      <div class="cta">
+        <a class="btn primary" href="#start">Quick start</a>
+        <a class="btn" href="readme.html">Read the README</a>
+        <a class="btn" href="https://github.com/yasinyaman/evolua">Source on GitHub</a>
+      </div>
+    </div>
+    <svg viewBox="0 0 420 360" role="img" aria-label="An organism at the centre with satellite organs and peers">
+      <defs>
+        <radialGradient id="g" cx="50%" cy="50%" r="60%"><stop offset="0" stop-color="#1b3a3a" stop-opacity=".9"/><stop offset="1" stop-color="#0b1420" stop-opacity="0"/></radialGradient>
+      </defs>
+      <rect width="420" height="360" fill="url(#g)"/>
+      <g stroke="#1fb989" stroke-opacity=".35" fill="none">
+        <circle cx="210" cy="180" r="150"/><circle cx="210" cy="180" r="110"/>
+      </g>
+      <g stroke="#1fb989" stroke-opacity=".6" stroke-width="1.5">
+        <line x1="210" y1="180" x2="72" y2="58"/><line x1="210" y1="180" x2="352" y2="66"/>
+        <line x1="210" y1="180" x2="338" y2="286"/><line x1="210" y1="180" x2="84" y2="300"/>
+        <line x1="210" y1="180" x2="232" y2="342"/>
+      </g>
+      <circle cx="210" cy="180" r="62" fill="none" stroke="#2ee6a6" stroke-width="3"/>
+      <circle cx="210" cy="180" r="12" fill="#2ee6a6"/>
+      <g fill="none" stroke="#2ee6a6" stroke-width="2.5">
+        <circle cx="72" cy="58" r="26"/><circle cx="352" cy="66" r="24"/>
+        <circle cx="338" cy="286" r="30"/><circle cx="84" cy="300" r="20"/><circle cx="232" cy="342" r="14"/>
+      </g>
+      <g fill="#9fb0c4" font-family="ui-monospace, Menlo, monospace" font-size="11" text-anchor="middle">
+        <text x="72" y="98">sensor</text><text x="352" y="104">organ</text><text x="338" y="330">peer</text>
+        <text x="84" y="334">organ</text><text x="210" y="258">organism</text>
+      </g>
+    </svg>
+  </section>
+
+  <section id="what" class="section">
+    <h2>What it does</h2>
+    <p class="note">The Rust host never changes and <code>lua/core/</code> is an immutable contract. Every new capability is a new <code>.lua</code> file — written by the organism itself, at runtime, from genome blueprints or by its brain.</p>
+    <div class="grid">
+      <div class="card"><div class="n">1 · PERCEPTION</div><h3>Sharp senses, a world model</h3><p>Per-process CPU and RAM, OS crash and error logs, the filesystem. Entities get dossiers: temperature, trend, salience.</p></div>
+      <div class="card"><div class="n">2 · BRAIN</div><h3>Reasons with whatever it can reach</h3><p>An online service, a model already on the machine, or a download sized to the host — with online ↔ local failover for life. Rules when there is no brain.</p></div>
+      <div class="card"><div class="n">3 · AUTONOMY</div><h3>Learn → report → suggest → act</h3><p>A five-rung ladder with a file-based approval inbox, a safe-list, reversibility and an audit log. Destructive actions always wait for a human.</p></div>
+      <div class="card"><div class="n">4 · EVOLUTION</div><h3>A real genetic system</h3><p>Typed-rule genomes, honest fitness derived from observable facts, MAP-Elites diversity, tournament selection, self-adaptive mutation, gene transfer.</p></div>
+      <div class="card"><div class="n">5 · COLONY</div><h3>Replicates, with purpose</h3><p>Bounded self-replication into communicating processes, across machines with a mesh. Offspring are born with a crystallized goal; the colony learns which purposes pay.</p></div>
+      <div class="card"><div class="n">6 · SYNTHESIS</div><h3>The brain writes organs</h3><p>Templates are the floor. For a goal nothing covers, the model writes a whole organ against real command output, pre-flighted column by column, then selection decides.</p></div>
+    </div>
+
+    <h3>One tick</h3>
+    <div class="flow">
+      <div class="step"><b>perceive</b><span>every sensor senses</span></div>
+      <div class="step"><b>model</b><span>entities, trends, salience</span></div>
+      <div class="step"><b>reason</b><span>snapshot → decision schema</span></div>
+      <div class="step"><b>evolve</b><span>grow, mutate, cull, archive</span></div>
+      <div class="step"><b>act &amp; report</b><span>ladder-gated, audited</span></div>
+    </div>
+  </section>
+
+  <section id="brain" class="section">
+    <h2>The brain is found, not shipped</h2>
+    <div class="two">
+      <div>
+        <p>The binary carries no model and weighs about 6 MB. At birth the organism picks a brain in this order and keeps failing over between them:</p>
+        <ol class="ladder">
+          <li>An explicit GGUF (<code>--model</code>, <code>$EVOLUA_MODEL</code>).</li>
+          <li>An <b>online service</b> whose key is in the environment or in <code>keys/&lt;provider&gt;</code> — free tiers first.</li>
+          <li>The biggest usable brain <b>already on the machine</b>: Ollama, LM Studio, Hugging Face cache GGUFs, a running local server, the macOS on-device model.</li>
+          <li>The keyless public endpoint, then a pinned download sized to the host, then rules.</li>
+        </ol>
+      </div>
+      <div>
+        <p class="note">A blocked network never stalls the loop: after three failures the online brain backs off, the local one answers, a probe brings the service back and frees the local model's RAM. No key anywhere? It writes a one-page request naming the free providers and picks the key up the moment it appears.</p>
+        <p>Every switch is judged on fresh samples and rolled back if the new brain does worse. A brain too slow for the host steps down. Verdicts are remembered across lives.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="colony" class="section">
+    <h2>A colony, across machines</h2>
+    <div class="two">
+      <div>
+        <p>One seeded organ gives the organism a sense of siblings through a plain file protocol: presence beacons, mailboxes, a shared gene pool and a purpose ledger. With <code>--mesh</code> a small host-side nerve carries the same files over the network — LAN discovery, seeds for Tailscale or WAN — so a peer on another machine looks exactly like a local one.</p>
+        <p>Replication is <b>triply bounded</b>: clone depth, colony size and a colony-wide cooldown. Children are mortal and never replicate themselves. A node without a brain can borrow a peer's served model; a node without internet can tunnel through a peer's gateway.</p>
+      </div>
+      <div>
+        <table>
+          <tr><th>Pressure at split time</th><th>The child's purpose</th></tr>
+          <tr><td>a stimulus nobody handles</td><td>fill the gap (<code>explore</code>)</td></tr>
+          <tr><td>the fittest organ's niche</td><td>deepen what pays (<code>exploit</code>)</td></tr>
+          <tr><td>harvested payoffs of past children</td><td>a bandit over goals (<code>S4</code>)</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="start" class="section">
+    <h2>Quick start</h2>
+<pre><code># build the single binary (Lua is vendored; no model bytes inside)
+cargo build --release
+
+./target/release/evolua --ticks 60 --tick-seconds 0.2      # bounded fast demo
+./target/release/evolua --goal "report errors"             # directed mode (Turkish works too)
+./target/release/evolua --clone --clone-ignore-battery     # let it grow a colony
+./target/release/evolua --mesh --mesh-seed host:7707       # join organisms on other machines
+./target/release/evolua                                    # lives indefinitely
+
+# no Rust toolchain? a stock Lua 5.3+ runs the organism directly (rules-only brain)
+lua lua/main.lua --ticks 60 --tick-seconds 0.2</code></pre>
+    <p>Then read the data home it printed: <code>reports/</code> for Markdown status reports, <code>plugins/</code> for the organs it wrote, <code>state/evolution.log</code> for the per-generation metrics, <code>approvals/</code> for anything it wants a human to decide.</p>
+  </section>
+
+  <section id="docs" class="section">
+    <h2>Documentation</h2>
+    <div class="docs-list">
+      <a href="readme.html"><b>README</b><small>the full tour: architecture, flags, autonomy ladder, safety</small></a>
+      <a href="readme.tr.html"><b>README (Türkçe)</b><small>aynı tur, Türkçe</small></a>
+      <a href="docs/DEMO.html"><b>Annotated demo run</b><small>what one life looks like, step by step, from the real logs</small></a>
+      <a href="docs/COLONY.html"><b>Colony, supervisor, purpose, mesh</b><small>replication bounds, when to split, goal acquisition, across hosts</small></a>
+      <a href="docs/TRIALS.html"><b>Synthesis trials</b><small>can the brain write a working organ for a goal it has never seen?</small></a>
+      <a href="docs/TESTING.html"><b>Testing &amp; verification</b><small>unit suites, the bounded behavior suite, what each check proves</small></a>
+      <a href="docs/ROADMAP.html"><b>Roadmap</b><small>phases, what shipped, what is open</small></a>
+      <a href="docs/BUILD-PLAN.html"><b>Build plan</b><small>the phase-by-phase construction notes</small></a>
+    </div>
+  </section>
+</main>
+
+<footer><div class="wrap">
+  <span>EvoLua · MIT · an experiment in open, evolving software — read the safety section before running it unattended.</span>
+  <span><a href="https://github.com/yasinyaman/evolua">github.com/yasinyaman/evolua</a></span>
+</div></footer>
+</body>
+</html>

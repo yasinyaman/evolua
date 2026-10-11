@@ -22,6 +22,28 @@ end
 M.os = detect_os()
 M.sep = package.config:sub(1, 1)
 
+-- ── shell quoting ────────────────────────────────────────────────────────
+-- Quote ONE argument for the shell io.popen / os.execute run. Every command
+-- built from a path or other data must pass it through here. POSIX: single
+-- quotes, each embedded ' written as '\'' — nothing inside is special any more.
+-- Windows cmd has no real escape; double quotes with "" for an embedded quote is
+-- the convention most programs parse.
+function M.shq(s)
+  s = tostring(s)
+  if M.os == "windows" then return '"' .. s:gsub('"', '""') .. '"' end
+  return "'" .. s:gsub("'", "'\\''") .. "'"
+end
+
+-- Is this a path we're willing to perceive (watch, tail, hand to a command)?
+-- Rejects control characters and shell metacharacters outright: even quoted,
+-- a directory called `x"; rm …` is an accident or an attack, not a target.
+function M.safe_path(p)
+  if type(p) ~= "string" or p == "" then return false end
+  if p:find("[%c`$\"';&|<>*?!]") then return false end
+  if M.os ~= "windows" and p:find("\\", 1, true) then return false end
+  return true
+end
+
 -- ── shell capture helper ─────────────────────────────────────────────────
 -- Run a command, return its stdout as a string (or "" on failure). Safe: any
 -- error is swallowed so a missing tool never crashes a sensor.
@@ -62,17 +84,24 @@ function M.proc_list()
   local out = {}
   if not cmd then return out end
   for line in M.run(cmd):gmatch("[^\n]+") do
-    -- pid  pcpu  rss(KB)  comm(rest of line, may contain spaces/path)
-    local pid, cpu, rss, name = line:match("^%s*(%d+)%s+([%d%.]+)%s+(%d+)%s+(.+)$")
+    -- pid  pcpu  rss(KB)  comm(rest of line, may contain spaces/path).
+    -- pcpu may use a decimal comma under some locales ("0,5").
+    local pid, cpu, rss, name = line:match("^%s*(%d+)%s+([%d%.,]+)%s+(%d+)%s+(.+)$")
     if pid then
-      -- keep just the basename of comm (strip path)
-      local base = name:match("([^/\\]+)%s*$") or name
-      out[#out + 1] = {
-        pid = tonumber(pid),
-        cpu = tonumber(cpu) or 0,
-        mem_mb = (tonumber(rss) or 0) / 1024,
-        name = base:gsub("%s+$", ""),
-      }
+      name = name:gsub("%s+$", "")
+      -- macOS prints comm as the executable's full path: keep the basename.
+      -- Linux comm is already a name, and kernel threads carry a "/<cpu>"
+      -- suffix (ksoftirqd/1, kworker/0:1) — stripping there left an entity "1".
+      if M.os == "macos" then name = name:match("([^/]+)$") or name end
+      -- a name that is empty or only digits/punctuation identifies nothing
+      if name:find("%a") then
+        out[#out + 1] = {
+          pid = tonumber(pid),
+          cpu = tonumber((cpu:gsub(",", "."))) or 0,
+          mem_mb = (tonumber(rss) or 0) / 1024,
+          name = name,
+        }
+      end
     end
   end
   return out
@@ -135,14 +164,121 @@ function M.kill(pid)
   return true
 end
 
--- list a directory's entries (cross-OS), returns an array of names
+-- ── time ─────────────────────────────────────────────────────────────────
+-- Seconds for measuring how long something took. In the binary: monotonic
+-- wall-clock (host_now_ms), which includes time spent waiting on child
+-- processes. Plain Lua has no wall clock finer than os.time(), so it falls back
+-- to os.clock() — this process's CPU time only.
+function M.clock()
+  local host = rawget(_G, "host_now_ms")
+  if host then return host() / 1000 end
+  return os.clock()
+end
+
+-- Pause for sec seconds (fractions allowed). The binary sleeps natively; plain
+-- Lua has no sleep, so it shells out — `sleep` on unix, PowerShell on Windows
+-- (cmd has no fractional-second sleep).
+function M.sleep(sec)
+  if not sec or sec <= 0 then return end
+  local host = rawget(_G, "host_sleep_ms")
+  if host then return host(sec * 1000) end
+  if M.os == "windows" then
+    os.execute(string.format('powershell -NoProfile -Command "Start-Sleep -Milliseconds %d" 2>nul', math.floor(sec * 1000)))
+  else
+    os.execute("sleep " .. tostring(sec) .. " 2>/dev/null")
+  end
+end
+
+-- ── filesystem (host bindings when embedded, quoted shell otherwise) ──────
+-- In the binary these go through src/host.rs — no shell at all. Plain-Lua runs
+-- fall back to shell commands, with every path quoted by M.shq.
+
+-- list a directory's entries, sorted; {} if unreadable
 function M.list_dir(path)
+  local host = rawget(_G, "host_list_dir")
+  if host then return host(path) or {} end
   local out = {}
   local cmd = (M.os == "windows")
-    and ('dir /b "' .. path .. '" 2>nul')
-    or  ('ls -1 "' .. path .. '" 2>/dev/null')
+    and ("dir /b " .. M.shq(path) .. " 2>nul")
+    or  ("ls -1 " .. M.shq(path) .. " 2>/dev/null")
   for line in M.run(cmd):gmatch("[^\r\n]+") do
     if line ~= "" then out[#out + 1] = line end
+  end
+  return out
+end
+
+-- decision brains already on this machine (Ollama, LM Studio, HF / llama.cpp
+-- caches, GPT4All, Jan, $EVOLUA_MODEL_DIRS, extra_dirs): { {path, source, name,
+-- size_mb, params_b, arch, quant, ctx}, … } smallest first. Needs the binary
+-- (GGUF headers are read natively); plain Lua finds nothing.
+function M.models(extra_dirs)
+  local host = rawget(_G, "host_models")
+  if not host then return {} end
+  local ok, list = pcall(host, extra_dirs)
+  return ok and list or {}
+end
+
+-- create a directory and its parents (ok if it exists)
+function M.mkdir_p(path)
+  local host = rawget(_G, "host_mkdir")
+  if host then return host(path) end
+  if M.os == "windows" then os.execute("mkdir " .. M.shq(path) .. " 2>nul")
+  else os.execute("mkdir -p " .. M.shq(path) .. " 2>/dev/null") end
+  return true
+end
+
+-- the process's current working directory (nil if unknown)
+function M.cwd()
+  local host = rawget(_G, "host_cwd")
+  if host then return host() end
+  local pwd = os.getenv("PWD")
+  if pwd and pwd ~= "" then return pwd end
+  local out = M.run(M.os == "windows" and "cd" or "pwd 2>/dev/null"):gsub("%s+$", "")
+  return out ~= "" and out or nil
+end
+
+-- Walk `root` breadth-first down to opts.depth (root's children are depth 1),
+-- like `find -mindepth 1 -maxdepth N`. Returns { {path, dir, mtime, size}, … }.
+-- opts: depth (1), limit (1000, counted after filtering), kind ("dir"|"file"),
+-- suffix (e.g. ".log"), prune (directory names never descended into).
+-- Symlinks are not followed.
+function M.walk(root, opts)
+  opts = opts or {}
+  local host = rawget(_G, "host_walk")
+  if host then return host(root, opts) end
+  local depth, limit = opts.depth or 1, opts.limit or 1000
+  local cmd
+  if M.os == "linux" then
+    cmd = "find " .. M.shq(root) .. " -mindepth 1 -maxdepth " .. math.floor(depth) ..
+          " -printf '%y\\t%T@\\t%s\\t%p\\n' 2>/dev/null"
+  elseif M.os == "windows" then
+    local ps = root:gsub("'", "''")
+    cmd = 'powershell -NoProfile -Command "Get-ChildItem -LiteralPath \'' .. ps .. '\' -Recurse -Force -Depth ' ..
+          math.max(0, math.floor(depth) - 1) .. ' -EA SilentlyContinue | %{ \'{0}`t{1}`t{2}`t{3}\' -f ' ..
+          '$(if($_.PSIsContainer){\'d\'}else{\'f\'}), ' ..
+          '[int64](($_.LastWriteTimeUtc - [datetime]\'1970-01-01\').TotalSeconds), ' ..
+          '$(if($_.PSIsContainer){0}else{$_.Length}), $_.FullName }" 2>nul'
+  else  -- macOS / BSD: find has no -printf; stat prints octal mode (40xxx = dir)
+    cmd = "find " .. M.shq(root) .. " -mindepth 1 -maxdepth " .. math.floor(depth) ..
+          " -exec stat -f '%p%t%m%t%z%t%N' {} + 2>/dev/null"
+  end
+  local prune, out = {}, {}
+  for _, n in ipairs(opts.prune or {}) do prune[n] = true end
+  for line in M.run(cmd):gmatch("[^\r\n]+") do
+    local ty, mt, sz, p = line:match("^(%S+)\t([%d%.]+)\t(%d+)\t(.+)$")
+    if p then
+      local is_dir = (ty == "d") or ty:match("^40") ~= nil
+      local is_file = (ty == "f") or ty:match("^10") ~= nil
+      local pruned = false
+      for seg in p:gmatch("[^/\\]+") do if prune[seg] then pruned = true; break end end
+      local base = p:match("([^/\\]+)$") or p
+      if not pruned
+         and (opts.kind == nil or (opts.kind == "dir" and is_dir) or (opts.kind == "file" and is_file))
+         and (opts.suffix == nil or base:sub(-#opts.suffix) == opts.suffix) then
+        out[#out + 1] = { path = p, dir = is_dir, mtime = tonumber(mt) or 0, size = tonumber(sz) or 0 }
+        if #out >= limit then break end
+      end
+    end
   end
   return out
 end
@@ -160,16 +296,21 @@ function M.proc_detail(pid)
 end
 
 -- ── user-facing notification (action layer) ──────────────────────────────
+-- title/msg carry process names and (LLM-written) hypotheses, so they are data:
+-- quoted for the shell, and escaped for AppleScript on macOS.
 function M.notify(title, msg)
-  title = (title or "EvoLua"):gsub('"', "'")
-  msg = (msg or ""):gsub('"', "'")
+  title = tostring(title or "EvoLua"):gsub("%c", " ")
+  msg = tostring(msg or ""):gsub("%c", " ")
   if M.os == "macos" then
-    M.run(string.format('osascript -e \'display notification "%s" with title "%s"\' 2>/dev/null', msg, title))
+    local function as(s) return '"' .. s:gsub("\\", "\\\\"):gsub('"', '\\"') .. '"' end
+    local script = "display notification " .. as(msg) .. " with title " .. as(title)
+    M.run("osascript -e " .. M.shq(script) .. " 2>/dev/null")
   elseif M.os == "linux" then
-    M.run(string.format('notify-send "%s" "%s" 2>/dev/null', title, msg))
+    M.run("notify-send " .. M.shq(title) .. " " .. M.shq(msg) .. " 2>/dev/null")
   elseif M.os == "windows" then
-    -- msg.exe (present on most Windows); harmless no-op if unavailable
-    M.run(string.format('msg * /TIME:10 "%s: %s" 2>nul', title, msg))
+    -- msg.exe (present on most Windows); harmless no-op if unavailable. cmd can't
+    -- escape reliably, so drop the characters it would interpret.
+    M.run("msg * /TIME:10 " .. M.shq((title .. ": " .. msg):gsub('[%%^&|<>"]', "")) .. " 2>nul")
   end
 end
 

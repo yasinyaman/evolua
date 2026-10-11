@@ -1,47 +1,11 @@
--- core/memory.lua — persistent state + tiny dependency-free serializer
+-- core/memory.lua — persistent state (serialized by core/serialize.lua)
 -- Stores fitness scores, observation counters, generation log. Survives
 -- restarts so the organism "remembers" what it has learned/evolved.
 
+local ser = require("core.serialize").ser
+
 local Memory = {}
 Memory.__index = Memory
-
--- serialize a plain Lua value (tables/strings/numbers/booleans) to a literal
-local function ser(v, indent)
-  indent = indent or ""
-  local t = type(v)
-  if t == "number" or t == "boolean" then
-    return tostring(v)
-  elseif t == "string" then
-    return string.format("%q", v)
-  elseif t == "table" then
-    local parts, ni = {}, indent .. "  "
-    -- array part
-    local n = #v
-    local seen = {}
-    for i = 1, n do
-      seen[i] = true
-      parts[#parts + 1] = ni .. ser(v[i], ni)
-    end
-    -- hash part
-    local keys = {}
-    for k in pairs(v) do
-      if not (type(k) == "number" and seen[k]) then keys[#keys + 1] = k end
-    end
-    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
-    for _, k in ipairs(keys) do
-      local ks
-      if type(k) == "string" and k:match("^[%a_][%w_]*$") then
-        ks = k
-      else
-        ks = "[" .. ser(k, ni) .. "]"
-      end
-      parts[#parts + 1] = ni .. ks .. " = " .. ser(v[k], ni)
-    end
-    if #parts == 0 then return "{}" end
-    return "{\n" .. table.concat(parts, ",\n") .. "\n" .. indent .. "}"
-  end
-  return "nil"
-end
 
 function Memory.new(path)
   local self = setmetatable({ path = path, data = {} }, Memory)
@@ -95,6 +59,19 @@ function Memory:record_birth(entry)
   entry.at = os.date("%Y-%m-%d %H:%M:%S")
   table.insert(self.data.births, entry)
   return self.data.generation
+end
+
+-- keep births bounded: every record of a living organ (rehydrate needs its
+-- genes) plus the last `keep` records; older births of dead organs go
+function Memory:prune_births(alive, keep)
+  local births = self.data.births
+  local n = #births
+  if n <= keep then return end
+  local out = {}
+  for i, b in ipairs(births) do
+    if i > n - keep or alive[b.organ] then out[#out + 1] = b end
+  end
+  self.data.births = out
 end
 
 function Memory:bump(counter, by)

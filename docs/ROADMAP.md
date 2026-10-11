@@ -12,12 +12,26 @@ progress and the file list, see `docs/BUILD-PLAN.md`. Summary:
 
 - **Phases 1–4 coded**, the Lua side verified over the bridge with real perception + timing.
 - **Phase 5 (colony / supervisor / goal acquisition / exploration)** added and verified with
-  bounded runs (25/25 green — `docs/TESTING.md`). Deep-dive: **`docs/COLONY.md`**.
+  bounded runs (27/27 green — `docs/TESTING.md`). Deep-dive: **`docs/COLONY.md`**.
 - **Evolution engine enrichment** — honest fitness, MAP-Elites quality-diversity, rule-DSL/GP,
   self-adaptive ES, vertical + horizontal gene transfer, bandit template selection, and
   safety-gated actuators with outcome-credit (the section below).
-- **Rust side** (`main.rs`, `supervisor.rs`, `llm.rs`, `acquire.rs`) written to the proven mlua
-  pattern and built/tested with a native `cargo build`.
+- **Rust side** (`main.rs`, `supervisor.rs`, `brain.rs`, `discover.rs`, `service.rs`, `apple.rs`,
+  `llm.rs`, `remote.rs`, `acquire.rs`, `mesh.rs`, `netproxy.rs`, `host.rs`) written to the proven
+  mlua pattern and built/tested with a native `cargo build`; unit tests in Lua (`tests/run.lua`)
+  and Rust, the bounded suite in `scripts/fulltest.sh`, CI on Ubuntu + macOS.
+- **Brain sourcing (2026-10)** — the binary carries no model (~6 MB). `core/brain.lua` picks, per
+  life: explicit → an online service with a key (free tiers first, keys via env or `keys/<provider>`)
+  → the biggest usable brain already on the machine (GGUFs, a local LLM server, the macOS on-device
+  model) → the keyless public endpoint → the default (downloaded / embedded) → rules — with
+  online↔local **failover** (backoff + probe) for life, probation + speed checks + rollback for
+  every switch, and a pinned Qwen2.5-Coder download ladder sized to the host.
+- **Synthesis (2026-10)** — the `synth` organ: the brain writes whole organs from a goal/unhandled
+  stimulus, grounded in real command output, dry-run and pre-flighted against it **column by
+  column** (padded tables are the classic small-model trap), selected by honest fitness + report
+  value, with failures fed back. Templates became the floor.
+- **Mesh (2026-10)** — `--mesh` bridges the colony across machines: discovery, mail, the gene pool
+  and the purpose ledger; a node can borrow a peer's served model or internet gateway.
 - Open items: live verification on a Windows VM, `gpu-dynamic` (`GGML_BACKEND_DL`).
 
 ## Phase 5 — Colony, supervisor, goal acquisition, exploration *(implemented)*
@@ -79,7 +93,8 @@ Full design and diagrams: **`docs/COLONY.md`**. Verification: **`docs/TESTING.md
 
 **Selection & investment**
 - **Tournament selection + soft probabilistic death** — replaces elitist rank-1 breeding and
-  single-worst culling; seeded-infrastructure lineages (colony/supervisor/explorer) are protected.
+  single-worst culling; seeded-infrastructure lineages (colony/supervisor/explorer/synth) are
+  protected singletons — cull-exempt, never copied by any drive (`Evolver:spawn` is the one gate).
 - **Bandit template selection** — a UCB bandit over templates (reward = average fitness,
   optimistic prior) invests reproduction where it pays and tries each template once.
 
@@ -127,7 +142,7 @@ grammar excluding destructive verbs (kill is not expressible).
 - **`core/reasoner.lua`** — sends dossiers over a salience threshold to the LLM, gets a
   natural-language interpretation + (optionally) organ code. Expensive → not every tick, triggered by *interest*.
 - **`core/autonomy.lua`** — places the conclusion on the ladder (below).
-- **`llm.rs` binding** — `llm_complete(prompt)` host function. The binary stays standalone.
+- **`src/brain.rs`** — `host_brain_*` bindings; `core/brain.lua` sets the reasoner's `llm_complete(system, user, max)` once a brain loads. The binary stays standalone.
 
 ## Curiosity — "wandering the system"
 
@@ -154,7 +169,7 @@ Every conclusion carries a **confidence score**; the action is chosen by `min(co
 - Only **reversible** actions are autonomous (renice/throttle, restart a user process); destructive
   ones (kill, file deletion) **always** require L3 approval.
 - Actions are limited to a **safe-list** (allowlist); every action is written to an **audit log**.
-- LLM-generated organ code is **dry-run** first; if it makes system-changing calls it auto-drops to L3.
+- LLM-generated organ code is compiled, denylisted and **dry-run** first (the `synth` organ); code with system-changing calls is rejected outright and the model is told why.
 
 ---
 
@@ -165,7 +180,9 @@ Every conclusion carries a **confidence score**; the action is chosen by `min(co
 Output: entity-based reports like "Chrome Helper hot for 40 ticks (cpu ~85%), 2 errors".
 → Test: generate synthetic load/errors, verify the right process is caught.
 
-### Phase 2 — Decision brain + sense-making  *(opt-in `llm` feature)*
+### Phase 2 — Decision brain + sense-making  *(`llm` runtime is a default feature; the embedded model is the opt-in `embed_smol`)*
+> Historical design note — the brain is now *sourced* (online service / machine brain / download / embedded / rules, see README "Decision brain"); the schema-and-fallback reasoning below still holds for whichever brain is active.
+
 Embedded **SmolLM2-135M** decision cortex (`llama-cpp-2`, `embed_smol`) + `reasoner.lua`. The tiny
 model decides triage/routing/escalation; good organ code + rich narrative come from templates/RAG or
 (when present) a **downloaded larger model**. Output in a strict schema, strict parse + rule fallback.
@@ -187,7 +204,7 @@ Biological analogy: a fixed **brainstem** (decisions/routing) + a growing **cort
 ### Two-speed cognition
 | Layer | Where | Job | Cost |
 |---|---|---|---|
-| **Decision cortex** | embedded, **SmolLM2-135M (~90 MB)** | triage, salience, which-organ, autonomy level, escalation decision | always on, cheap, offline |
+| **Decision cortex** | embedded, **SmolLM2-135M (Q8_0, ~145 MB; opt-in build)** | triage, salience, which-organ, autonomy level, escalation decision | always on, cheap, offline |
 | **Thinking layer** | acquired by evolution | good Lua organ code + rich situation narrative | on demand, if capacity allows |
 
 The embedded tiny model **doesn't write code** — it just **decides**: is this situation important,
@@ -196,13 +213,13 @@ autonomy level, should it upgrade its model? Organ *bodies* come from templates 
 escalation is needed — a **downloaded larger model** (Phase 2/4). RAG feeds exemplars to whichever generator runs.
 
 ### Why tiny is enough
-- The binary stays small (~90 MB), runs offline everywhere, decisions always available.
+- The default binary carries no model at all (~6 MB); the opt-in embedded one (~145 MB) runs offline everywhere, decisions always available.
 - Generation **quality** scales with evolution + hardware; decision **availability** is constant.
 - 135M decisions are noisy → wrapped by a **rule-based guardrail** + confidence threshold: if the tiny
   model is unsure, fall back to the deterministic rule (safe default). The model *enriches* the decision; it doesn't own safety.
 - Output is requested in a **strict schema** (keywords), strictly parsed; parse failure → rule fallback.
 
-A build-time feature picks the embedded base (`embed_smol` default). Higher tiers are acquired at runtime (Phase 4).
+A build-time feature bakes the embedded base in (`embed_smol`, opt-in — CI leaves it out). Higher tiers are found on the machine or acquired at runtime (Phase 4).
 
 ## Self-improvement — RAG + alternatives
 
@@ -227,7 +244,7 @@ The generation prompt itself is under selection: prompt variants that birth high
 Accumulated high-fitness organs + interpretations are harvested into a fine-tune dataset; the model is
 retrained and the embedded model is hot-swapped. Learned behavior is baked into the weights.
 
-> The fast loop (RAG + replay) is always on; the slow loop (LoRA) is periodic/manual.
+> The fast loop (BM25 RAG over past situations) is always on; the slow loop (LoRA) is a design option, not implemented.
 
 ---
 
@@ -244,33 +261,44 @@ a **resolver** with priority **disk (data home) > embedded base**.
   (hot-swap on next load). The existing `--model`/env override is preserved.
 
 ### Host capacity probe  (`core/hostcaps.lua`)
-Measures at boot + periodically: total/free RAM, CPU cores + arch, free disk, battery/thermal, and
-**measured real tokens/sec**. These map to the model ladder.
+Measures at boot + periodically: total/available RAM, CPU cores + arch, free disk, battery. Speed is
+judged on the brain itself — mean wall-clock seconds per decision (`Brain.mean_seconds`, stepped down
+past `brain_max_seconds`). These map to the model ladder.
 
 ### Model ladder (by capacity)
-| Tier | Model | ~RAM | Condition |
+| Tier | Model | min RAM | Condition |
 |---|---|---|---|
-| 0 (base) | SmolLM2-135M Q4 | ~0.5 GB | every machine — embedded fallback |
-| 1 | Qwen2.5-0.5B Q5 | ~0.6 GB | pinned url+sha (real acquisition) |
-| 2 | Qwen2.5-0.5B Q4 | ~1.5 GB | 2+ cores |
-| 3 | Qwen3-0.6B Q4 | ~2 GB | better reasoning |
-| 4 | Qwen2.5-1.5B Q4 | ~3–4 GB | 4+ cores, ample RAM |
+| 1 (base) | SmolLM2-135M Q4 | 0.5 GB | embedded fallback (`embed_smol` builds) |
+| 2 | Qwen2.5-Coder-0.5B Q4 | 0.6 GB | pinned url+sha (every download tier is) |
+| 3 | Qwen2.5-Coder-1.5B Q4 | 1.6 GB | 2+ cores |
+| 4 | Qwen2.5-Coder-3B Q4 | 2.8 GB | 4+ cores |
+| 5 | Qwen2.5-Coder-7B Q4 | 5.9 GB | 4+ cores, ample RAM |
 
-*(Thresholds calibrated by measured tokens/sec; always leave RAM headroom.)*
+*(`modelmgr.lua` `LADDER`; every tier lands as `models/decision.gguf`, the previous one kept as
+`.prev` for rollback. Always leave RAM headroom — `model_headroom`.)*
 
 ### Upgrade decision (meta-selection)
 Climbs when **both** hold:
 1. **Capacity** — the host runs the next tier with headroom (RAM/disk/cores, not on battery).
 2. **Need** — the current model is a **bottleneck**: its organs are low-fitness / interpretations rejected.
 
-Descends on: OOM risk, high latency, battery/thermal, or if the larger model's fitness doesn't beat the smaller.
+Descends when capacity drops (RAM/cores no longer carry the tier); separately, a brain slower than `brain_max_seconds` steps down (`check_speed`) and a switch whose rule-fallback rate is worse than before is rolled back (`judge_upgrade` → `model_rollback`).
 
 ### Upgrade = a large (but reversible) action on the autonomy ladder
 - Downloading a model is significant → default **L3 (suggest/approve)**; autonomous if `autonomy_ceiling ≥ L4`
   and checksum + disk + power checks pass.
 - **Safety:** disk/RAM check before download; GGUF **checksum/signature verification**; no download on
   battery; bandwidth awareness.
-- **Rollback:** the previous model is kept; if the new one fails to load or is low-fitness, **revert**.
+- **Rollback:** `acquire` keeps the previous model as `<name>.prev`. Once the upgraded brain has
+  `model_min_samples` decisions, a higher rule-fallback rate than before the upgrade proposes
+  `model_rollback` (safe-listed; also accepted from the approval inbox), which restores `.prev`
+  and backs off the rolled-back tier. A failed download is locked for the life and retried with
+  exponential back-off across lives. A switched-to brain that doesn't load in a later life is
+  noticed at boot (`ModelMgr:on_boot`), backed off and replaced by the previous choice.
+- **Use what's already there:** the default brain (embedded / downloaded) never changes, but a
+  bigger usable brain already on the machine (a GGUF another tool fetched, a running local LLM
+  server, macOS's on-device model) is used instead — on probation, and stepped down if too slow.
+  Before downloading, the ladder proposes `model_adopt`. See README "Decision brain".
 - **Audit log:** every model change (tier, reason, confidence) is logged.
 
 ### GPU: "GPU if present, else CPU" — three scenarios by backend
@@ -282,7 +310,7 @@ Descends on: OOM risk, high latency, battery/thermal, or if the larger model's f
   libraries; at runtime a registry loads whichever GPU is present, gracefully falling back to CPU. Cost: the "single file" property is gone.
 
 **Decision (EvoLua):** the embedded 135M decision brain is fast on CPU; GPU is meaningful only for the
-larger **downloaded models (Tier 3+)** in Phase 4. So: **default CPU-only** (single file, everywhere,
+larger **downloaded or discovered models (1.5B and up)** in Phase 4. So: **default CPU-only** (single file, everywhere,
 always works); **opt-in** `gpu-metal` (safe default on Mac), `gpu-cuda` / `gpu-vulkan` (separate builds);
 **future** `gpu-dynamic` (`GGML_BACKEND_DL`) — one build, automatic GPU-or-CPU.
 

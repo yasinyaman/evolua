@@ -26,6 +26,7 @@ return {
   name = "proc_errors",
   desc = "perceives OS errors/crashes attributed to a process; emits proc.error",
   events = { "proc.error" },
+  _attribute = attribute,   -- for tests
 
   _seen = {},        -- hash set of recently emitted lines (bounded)
   _seen_order = {},  -- FIFO of hashes to bound memory

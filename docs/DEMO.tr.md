@@ -32,16 +32,21 @@ sense organ online: curiosity — actively profiles the least-known process
 awoke with 3 organ(s), generation 3
 ```
 
-Üç temel organ otomatik tohumlanır (çekirdek değişikliği yok — `templates.lua`'daki genom
-blueprint'leri):
+Temel organlar — colony, supervisor, explorer, evrilebilir bir rule organı ve sentezleyici — otomatik
+tohumlanır (çekirdek değişikliği yok — `templates.lua`'daki genom blueprint'leri):
 
 ```
 spawned organ 'gen_colony_1'     from <colony>
 spawned organ 'gen_explorer_1'   from <explorer>
 spawned organ 'gen_supervisor_1' from <supervisor>
-spawned organ 'gen_supervisor_2' from <supervisor>   ← evrim daha şimdiden 2 varyant üretti
-spawned organ 'gen_supervisor_3' from <supervisor>     (en zinde organ, max_per_template tavanında)
+spawned organ 'gen_supervisor_2' from <supervisor>   ← kopyalar: hata, aşağıdaki nota bak
+spawned organ 'gen_supervisor_3' from <supervisor>
 ```
+
+> Bu kayıt, korumalı organların tekil hale gelmesinden öncedir. Fazladan iki süpervizör, kendi
+> yaydığı `host.vitals` uyaranını işleyerek liderlik tablosunun tepesine çıkan bir organın
+> mutasyon kopyalarıydı. Güncel bir koşu tam bir colony, explorer, supervisor ve synth tohumlar; bus da
+> bir organa kendi yaydığı uyarandan kredi vermez.
 
 ## 2. Algı — varlık-bazlı dünya modeli
 
@@ -195,7 +200,7 @@ load/attach failures: 0   ·   fatal errors: 0
 
 Bu anlatı tek bir koşu; davranış host ortamına göre değişir (makinenin sunduğu her şeye tepki
 verir). Tekrarlanabilir doğrulama, [TESTING.md](TESTING.md)'deki sınırlı suite'tir —
-**25 kontrol, hepsi yeşil** — build, temel koşu, koloni iletişimi, akıllı bölünme, amaç
+**27 kontrol, hepsi yeşil** — build, temel koşu, koloni iletişimi, akıllı bölünme, amaç
 kristalleşmesi, güç-farkında geri durma, generalist klonlar, süpervizör roundtrip'i,
 yaşamlar-arası bellek, S4 amaç-öğrenme ve ortam keşfini kapsar.
 

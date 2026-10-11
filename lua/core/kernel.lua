@@ -12,6 +12,9 @@ local WorldModel = require("core.worldmodel")
 local Reasoner   = require("core.reasoner")
 local Autonomy   = require("core.autonomy")
 local ModelMgr   = require("core.modelmgr")
+local Platform   = require("core.platform")
+local Brain      = require("core.brain")
+local HostCaps   = require("core.hostcaps")
 
 local Kernel = {}
 Kernel.__index = Kernel
@@ -22,18 +25,20 @@ local BUILTIN_SENSORS = {
   "curiosity",                 -- Faz 3: active exploration
 }
 
-local function ensure_dir(p) os.execute('mkdir -p "' .. p .. '" 2>/dev/null') end
-
 function Kernel.new(cfg)
-  ensure_dir(cfg.plugins_dir)
-  ensure_dir(cfg.reports_dir)
-  ensure_dir(cfg.state_dir)
+  Platform.mkdir_p(cfg.plugins_dir)
+  Platform.mkdir_p(cfg.reports_dir)
+  Platform.mkdir_p(cfg.state_dir)
 
-  local log = Log.new({ level = cfg.log_level, path = cfg.state_dir .. "/evolua.log" })
+  local log = Log.new({ level = cfg.log_level, path = cfg.state_dir .. "/evolua.log", max_bytes = cfg.log_max_bytes })
   local self = setmetatable({ cfg = cfg, tick = 0, running = false, sensors = {} }, Kernel)
 
   -- shared organism context handed to every subsystem & plugin
-  local ctx = { cfg = cfg, log = log, kernel = self }
+  -- sandboxed organs can't require core, so the kernel hands them two modules:
+  -- ctx.platform (shell quoting, path checks, list_dir / walk / mkdir_p without
+  -- the shell) and ctx.serialize (Lua literals for anything they persist).
+  local ctx = { cfg = cfg, log = log, kernel = self, platform = Platform,
+                serialize = require("core.serialize") }
   ctx.bus      = Bus.new(log, cfg)   -- cfg carries the honest-reward tunables
   ctx.memory   = Memory.new(cfg.state_dir .. "/memory.lua")
   ctx.registry = Registry.new(ctx)
@@ -63,6 +68,18 @@ function Kernel:boot()
   ctx.log:info("\27[1mEvoLua\27[0m booting — mode=%s%s", self.cfg.mode,
     (self.cfg.goal and self.cfg.goal ~= "") and (" goal=\"" .. self.cfg.goal .. "\"") or "")
 
+  -- this life's decision brain (core/brain.lua): the biggest usable one on this
+  -- machine if it beats the default, else the default. Brains backed off for
+  -- failing, being rolled back or being too slow are skipped. The model manager
+  -- then starts fresh samples and puts a machine-found brain on probation.
+  local mm = ctx.modelmgr
+  local how, default
+  ctx.brain, how, default = Brain.select(self.cfg, mm.models_dir, ctx.log, {
+    ram_total_mb = HostCaps.probe(mm.models_dir).ram_total_mb,
+    skip = function(key) return mm:blocked(key) end,
+  })
+  mm:on_boot(ctx.brain, how, default)
+
   -- load built-in sensors
   for _, name in ipairs(BUILTIN_SENSORS) do
     if self.cfg.sensors[name] ~= false then
@@ -80,12 +97,6 @@ function Kernel:boot()
   ctx.registry:scan()
   ctx.log:info("awoke with %d organ(s), generation %d",
     #ctx.registry:list(), ctx.memory.data.generation)
-end
-
--- portable sleep without external deps
-local function sleep(sec)
-  if sec <= 0 then return end
-  os.execute("sleep " .. tostring(sec) .. " 2>/dev/null")
 end
 
 function Kernel:run()
@@ -138,7 +149,7 @@ function Kernel:run()
     end
 
     if max and self.tick >= max then self.running = false end
-    if self.running then sleep(self.cfg.tick_seconds or 1) end
+    if self.running then Platform.sleep(self.cfg.tick_seconds or 1) end
   end
 
   self:shutdown()

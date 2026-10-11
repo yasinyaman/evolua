@@ -1,0 +1,44 @@
+name: pages
+
+# Publishes the project site to GitHub Pages: the hand-written landing page in site/
+# plus README.md, README.tr.md and docs/*.md rendered with pandoc (scripts/build_site.sh).
+# Pages must be set to "GitHub Actions" as the source once (Settings → Pages).
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", "docs/**", "README.md", "README.tr.md", "scripts/build_site.sh", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pandoc
+        run: sudo apt-get update && sudo apt-get install -y pandoc
+      - name: Build site
+        run: scripts/build_site.sh
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

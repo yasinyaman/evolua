@@ -18,6 +18,8 @@ return {
       local fh = io.open(path, "r")
       if fh then
         local start = self._pos[path] or 0
+        -- the file shrank: it was rotated (evolua.log → .1) or truncated; start over
+        if (fh:seek("end") or 0) < start then start = 0 end
         fh:seek("set", start)
         local chunk = fh:read("*a") or ""
         self._pos[path] = fh:seek()
