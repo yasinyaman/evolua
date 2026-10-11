@@ -171,6 +171,18 @@ fn genepool_fitness(body: &str) -> f64 {
         .unwrap_or(f64::NEG_INFINITY)
 }
 
+/// A remote peer whose beacon is older than this is not contacted: it has gone, and the
+/// colony organ will prune its beacon file (peer_ttl) — no point retrying every round.
+const PEER_STALE_SECS: u64 = 60;
+
+/// The `addr=` of a beacon file that is still fresh, else None.
+fn live_addr(beacon: &str) -> Option<String> {
+    let field = |k: &str| beacon.split_whitespace().find_map(|kv| kv.strip_prefix(&format!("{k}=")));
+    let addr = field("addr")?;
+    let seen: u64 = field("time").and_then(|t| t.parse().ok()).unwrap_or(0);
+    (now().saturating_sub(seen) <= PEER_STALE_SECS).then(|| addr.to_string())
+}
+
 /// A ledger file name is a template key or a colony id: one path segment, nothing else.
 fn safe_name(name: &str) -> bool {
     !name.is_empty()
@@ -434,7 +446,7 @@ fn sync_ledgers(sh: &Arc<Shared>, log: &Path) {
             continue;
         }
         let Ok(beacon) = fs::read_to_string(entry.path()) else { continue };
-        let Some(addr) = beacon.split_whitespace().find_map(|kv| kv.strip_prefix("addr=")) else { continue };
+        let Some(addr) = live_addr(&beacon) else { continue };
         for ledger in LEDGERS {
             let Ok(files) = fs::read_dir(sh.colony_dir.join(ledger)) else { continue };
             for f in files.flatten() {
@@ -458,7 +470,7 @@ fn sync_ledgers(sh: &Arc<Shared>, log: &Path) {
                     continue;
                 }
                 let head = format!("{MAGIC} SYNC ledger={ledger} name={name}{token_kv}");
-                if send_line(addr, &head, &body, log) {
+                if send_line(&addr, &head, &body, log) {
                     sh.shipped.lock().unwrap().insert(key, mtime);
                 } else {
                     append(log, &format!("sync: could not reach {id} at {addr} — will retry"));
@@ -497,7 +509,7 @@ fn forward_outgoing(sh: &Arc<Shared>, log: &Path) {
             continue;
         }
         let Ok(beacon) = fs::read_to_string(entry.path()) else { continue };
-        let Some(addr) = beacon.split_whitespace().find_map(|kv| kv.strip_prefix("addr=")) else { continue };
+        let Some(addr) = live_addr(&beacon) else { continue };
         let Ok(mails) = fs::read_dir(sh.inbox_dir.join(&id)) else { continue };
         for m in mails.flatten() {
             let name = m.file_name().to_string_lossy().to_string();
@@ -507,7 +519,7 @@ fn forward_outgoing(sh: &Arc<Shared>, log: &Path) {
             let Ok(body) = fs::read_to_string(m.path()) else { continue };
             let token_kv = sh.token.as_ref().map(|t| format!(" token={t}")).unwrap_or_default();
             let head = format!("{MAGIC} MSG to={id}{token_kv}");
-            if send_line(addr, &head, &body, log) {
+            if send_line(&addr, &head, &body, log) {
                 let _ = fs::remove_file(m.path());
             } else {
                 append(log, &format!("could not deliver to {id} at {addr} — will retry"));

@@ -181,23 +181,4 @@ impl Remote {
     }
 }
 
-/// Reasoning models (Qwen3, DeepSeek-R1, …) prefix their answer with a `<think>…</think>`
-/// block. The organism wants the answer; the deliberation would only confuse the strict
-/// parsers downstream (decision schema, ```lua fence).
-pub fn strip_thinking(text: &str) -> String {
-    let mut s = text.to_string();
-    while let Some(start) = s.find("<think>") {
-        match s[start..].find("</think>") {
-            Some(rel) => {
-                let end = start + rel + "</think>".len();
-                s.replace_range(start..end, "");
-            }
-            None => {
-                // unterminated block = the whole reply was deliberation that got cut off
-                s.truncate(start);
-                break;
-            }
-        }
-    }
-    s.trim_start().to_string()
-}
+pub use crate::brain::strip_thinking;

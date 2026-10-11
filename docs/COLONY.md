@@ -84,10 +84,12 @@ text.pollinations.ai:443` in gb10's `state/mesh.log`).
 Also verified 2026-10-11: a MacBook and a GB10 host joined over Tailscale with one seed each, discovered
 each other within 2 s (`state/mesh.log`: `peer discovered: gb10-node at 100.111.119.48:7707`), and
 exchanged colony pings both ways every 5 ticks for the whole run. The ledger gossip was verified
-the same day with two nodes on one host (`--mesh-port 7811 --mesh-seed 127.0.0.1:7812` and the
-reverse): a gene-pool entry planted on A (`fitness 42`) appeared under B's `colony/genepool/`
-within one beacon round, and A's `outcomes/<id>` (a `--goal "report errors"` member) landed in B's
-`colony/outcomes/` (`state/mesh.log`: `sync: genepool/fs_journal received`).
+the same day, first with two nodes on one host (`--mesh-port 7811 --mesh-seed 127.0.0.1:7812` and
+the reverse), then Mac ↔ GB10 over Tailscale: a gene-pool entry planted on the Mac (`cpu_guard`,
+`fitness 77`) and the Mac's `outcomes/mac-node` (a `--goal "report errors"` member) were on gb10
+four seconds after discovery (`sync: genepool/cpu_guard received`), and gb10's `supervisor` genome
+and `outcomes/gb10-node` arrived on the Mac in the same round. A peer whose beacon is older than
+60 s is no longer contacted (its file is pruned by `peer_ttl`).
 
 The organ listens on the real clock (`self.heartbeat`) but its template `triggers` field is the
 synthetic `"colony.tick"` (never emitted), so the free drive never picks it. The guarantee that

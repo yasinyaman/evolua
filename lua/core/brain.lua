@@ -198,8 +198,14 @@ function Brain.candidates(cfg)
           spec = { kind = "apple", name = "Apple on-device model", params_b = 3 } })
   end
   -- smallest first; at equal size the one costing less of our RAM comes last (= preferred)
+  -- smallest first; at equal size the one that costs this process nothing comes last
+  -- (= preferred): a model a running server already holds (its GPU, its RAM — the same
+  -- Ollama blob loaded in-process on the CPU is many times slower) or the OS model, then
+  -- the GGUF that costs less of our RAM
+  local function rank(c) return (c.kind == "service" or c.kind == "apple") and 1 or 0 end
   table.sort(out, function(a, b)
     if a.params_b ~= b.params_b then return a.params_b < b.params_b end
+    if rank(a) ~= rank(b) then return rank(a) < rank(b) end
     return (a.size_mb or 0) > (b.size_mb or 0)
   end)
   return out

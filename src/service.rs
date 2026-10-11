@@ -105,6 +105,12 @@ pub fn detect(extra: &[String]) -> Vec<Service> {
     urls.iter().filter_map(|u| probe(u)).collect()
 }
 
+/// Model families whose default is to "think" before answering (Ollama `think` option).
+fn thinks(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.starts_with("qwen3") || m.contains("deepseek-r1") || m.contains("gpt-oss") || m.contains("magistral")
+}
+
 /// A model on a running server, ready to answer.
 pub struct Client {
     url: String,
@@ -136,10 +142,16 @@ impl Client {
             { "role": "user", "content": user },
         ]);
         let (path, body) = if self.api == "ollama" {
-            ("/api/chat", json!({
+            let mut b = json!({
                 "model": self.model, "messages": messages, "stream": false,
                 "options": { "temperature": 0.2, "num_predict": max_tokens },
-            }))
+            });
+            // a thinking model would spend the whole token budget deliberating inside
+            // <think>; Ollama (≥ 0.9) can switch that off for the families that have it
+            if thinks(&self.model) {
+                b["think"] = json!(false);
+            }
+            ("/api/chat", b)
         } else {
             ("/v1/chat/completions", json!({
                 "model": self.model, "messages": messages, "stream": false,

@@ -68,7 +68,12 @@ and the host (`src/brain.rs`) only loads what it is told to. Order for a life (`
    LM Studio / Jan / GPT4All / the HF and llama.cpp caches (`src/discover.rs`, read from their
    headers), a running local LLM server (`src/service.rs`, feature `service`), the macOS on-device
    model (`src/apple.rs`, feature `apple`) — "fits" = `model_ram_share` of physical RAM (optional
-   `model_max_mb`), not backed off, loads;
+   `model_max_mb`), not backed off, loads. At equal size a model a **running server already
+   holds** (its GPU, its RAM) or the OS model beats the same GGUF loaded in-process on the CPU
+   (on the GB10 that was 8 ticks in 10 s vs 40 s). Reasoning models' `<think>…</think>` is
+   stripped for every backend (`brain.rs` `strip_thinking`), and Ollama is told `think: false`
+   for the families that have it (`service.rs` `thinks`), or Qwen3 spends the whole token budget
+   deliberating;
 4. **the keyless public endpoint** (pollinations; `llm_keyless`) — only when nothing on the machine
    is worth using, because it answers 402 to big prompts;
 5. **the default** (`<home>/models/decision.gguf` if downloaded, else the embedded model) → rules.

@@ -107,6 +107,27 @@ fn load(spec: &Table, home: &Path) -> anyhow::Result<(Backend, String, String)> 
     }
 }
 
+/// Reasoning models (Qwen3, DeepSeek-R1, …) prefix their answer with a `<think>…</think>`
+/// block. The organism wants the answer; the deliberation would only confuse the strict
+/// parsers downstream (decision schema, ```lua fence). An unterminated block means the
+/// whole reply was deliberation that got cut off by max_tokens: nothing usable remains.
+pub fn strip_thinking(text: &str) -> String {
+    let mut s = text.to_string();
+    while let Some(start) = s.find("<think>") {
+        match s[start..].find("</think>") {
+            Some(rel) => {
+                let end = start + rel + "</think>".len();
+                s.replace_range(start..end, "");
+            }
+            None => {
+                s.truncate(start);
+                break;
+            }
+        }
+    }
+    s.trim_start().to_string()
+}
+
 fn info_table(lua: &Lua, a: Option<&Active>) -> mlua::Result<Table> {
     let t = lua.create_table()?;
     match a {
@@ -308,7 +329,7 @@ pub fn register(lua: &Lua, home: PathBuf) -> mlua::Result<()> {
             let guard = s.borrow();
             let Some(a) = guard.as_ref() else { return Ok(None) };
             match a.backend.complete(&system, &user, max_tokens.unwrap_or(192)) {
-                Ok(text) => Ok(Some(text)),
+                Ok(text) => Ok(Some(strip_thinking(&text))),
                 Err(e) => {
                     eprintln!("brain ({}) error: {e}", a.name);
                     Ok(None)
