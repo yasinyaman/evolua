@@ -28,7 +28,7 @@ use llama_cpp_2::{
 #[cfg(feature = "embed_smol")]
 const EMBEDDED_GGUF: &[u8] = include_bytes!("../models/smol.gguf");
 #[cfg(feature = "embed_smol")]
-pub const EMBEDDED_NAME: &str = "smollm2-135m-q4_k_m";
+pub const EMBEDDED_NAME: &str = "smollm2-135m-instruct-q8_0";
 
 /// Context window. Code synthesis prompts (organ contract + live stimuli + real
 /// command samples) need more room than the 6-line decision schema; 4096 fits a

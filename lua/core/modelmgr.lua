@@ -26,7 +26,7 @@ ModelMgr.__index = ModelMgr
 -- ram_min_mb ≈ weights + KV cache + runtime; approx_mb = download size.
 local HF = "https://huggingface.co/Qwen/"
 local LADDER = {
-  { name = "smol-135m-q4",   ram_min_mb = 500,  cores_min = 1, approx_mb = 90,   embedded = true, params_b = 0.135 },
+  { name = "smol-135m-q8",   ram_min_mb = 500,  cores_min = 1, approx_mb = 145,  embedded = true, params_b = 0.135 },
   { name = "qwen2.5-coder-0.5b-q4", ram_min_mb = 600,  cores_min = 1, approx_mb = 469,  file = "decision.gguf", params_b = 0.5,
     url = HF .. "Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf?download=true",
     sha = "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32" },

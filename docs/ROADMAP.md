@@ -3,7 +3,7 @@
 > Goal: let the organism see **which application** is eating resources / producing errors,
 > **wander the system and make sense** of what's happening (LLM), and act on a
 > **learn → report → suggest → intervene** ladder bounded by confidence + policy.
-> Platform-agnostic (macOS + Linux), without touching `mini-lua-coder`.
+> Platform-agnostic (macOS + Linux); a standalone crate.
 
 ## ⬛ Status: all five phases implemented
 
@@ -23,7 +23,7 @@ progress and the file list, see `docs/BUILD-PLAN.md`. Summary:
 - **Brain sourcing (2026-10)** — the binary carries no model (~6 MB). `core/brain.lua` picks, per
   life: explicit → an online service with a key (free tiers first, keys via env or `keys/<provider>`)
   → the biggest usable brain already on the machine (GGUFs, a local LLM server, the macOS on-device
-  model) → the keyless public endpoint → the default (downloaded / embedded) → rules — with
+  model) → the default (downloaded / embedded), or with no default the keyless public endpoint → rules — with
   online↔local **failover** (backoff + probe) for life, probation + speed checks + rollback for
   every switch, and a pinned Qwen2.5-Coder download ladder sized to the host.
 - **Synthesis (2026-10)** — the `synth` organ: the brain writes whole organs from a goal/unhandled
@@ -162,11 +162,11 @@ Every conclusion carries a **confidence score**; the action is chosen by `min(co
 | **L1 report** | write a situational report (narrative) | salience > threshold |
 | **L2 notify** | OS notification / highlighted log | high salience |
 | **L3 suggest** | "should I stop this process?" → approval inbox (file/interaction) | medium+ confidence |
-| **L4 intervene** | autonomous action (throttle/restart) | confidence ≥ threshold **and** ceiling ≥ L4 **and** action safe-listed |
+| **L4 intervene** | autonomous action (throttle, notify, model switches) | confidence ≥ threshold **and** ceiling ≥ L4 **and** action safe-listed |
 
 **Safety rules (L4):**
 - `autonomy_ceiling` (config) caps the ladder — default **L1 (report)**.
-- Only **reversible** actions are autonomous (renice/throttle, restart a user process); destructive
+- Only **reversible** actions are autonomous (renice/throttle, notify, model downgrade / rollback / adopt); destructive
   ones (kill, file deletion) **always** require L3 approval.
 - Actions are limited to a **safe-list** (allowlist); every action is written to an **audit log**.
 - LLM-generated organ code is compiled, denylisted and **dry-run** first (the `synth` organ); code with system-changing calls is rejected outright and the model is told why.
@@ -268,7 +268,7 @@ past `brain_max_seconds`). These map to the model ladder.
 ### Model ladder (by capacity)
 | Tier | Model | min RAM | Condition |
 |---|---|---|---|
-| 1 (base) | SmolLM2-135M Q4 | 0.5 GB | embedded fallback (`embed_smol` builds) |
+| 1 (base) | SmolLM2-135M Q8_0 | 0.5 GB | embedded fallback (`embed_smol` builds) |
 | 2 | Qwen2.5-Coder-0.5B Q4 | 0.6 GB | pinned url+sha (every download tier is) |
 | 3 | Qwen2.5-Coder-1.5B Q4 | 1.6 GB | 2+ cores |
 | 4 | Qwen2.5-Coder-3B Q4 | 2.8 GB | 4+ cores |

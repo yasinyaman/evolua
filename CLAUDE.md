@@ -15,14 +15,15 @@ is an immutable contract.** New capability is *always* a new `.lua` file — nev
 core. The organism writes those files itself at runtime from genome blueprints. When adding
 features, prefer a new template/plugin over modifying the kernel.
 
-Docs are in English (`README.md`, `docs/`, `CLAUDE.md`); `README.tr.md` is a Turkish mirror of
-the README. The project site (https://yaman.dev/evolua/) is `site/index.html` (hand-written
-landing page) plus the READMEs and `docs/*.md` rendered by pandoc — `scripts/build_site.sh` builds it
-into `_site/`, `.github/workflows/pages.yml` publishes it on every push to `main` that touches docs;
+Docs are English only (`README.md`, `docs/`, `CLAUDE.md`; the Turkish mirrors were dropped on
+2026-10-12). The project site (https://yaman.dev/evolua/) is `site/index.html` (hand-written
+landing page) plus the README and `docs/*.md` rendered by pandoc — `scripts/build_site.sh` builds it
+into `_site/`, `.github/workflows/pages.yml` publishes it on every push to `main` that touches
+`site/`, `docs/`, the README or the build script;
 `site/links.lua` rewrites the Markdown cross-links, so keep linking `.md` files as usual. Source code is English too, except the `goal_keywords` lists in `templates.lua`,
 which are intentionally **bilingual TR/EN** (e.g. "hata"/"error" → `error_reporter`): the English
 synonyms feed the reasoner's RAG, the Turkish ones keep Turkish `--goal` directives working —
-don't translate the Turkish away. Keep README.md and README.tr.md in sync when you change either.
+don't translate the Turkish away.
 
 ## Repository layout
 
@@ -141,7 +142,7 @@ Two layers:
 - **Unit tests** for the pure parts — `lua tests/run.lua` (stock Lua, no host; serializer,
   memory, bus reward math, rule DSL, model ladder, reasoner parsing, RAG, goal matching,
   platform helpers, log rotation, brain selection incl. online providers + failover against a
-  fake host) and `cargo test` (service / acquire / remote add their own). Add a `tests/test_*.lua`
+  fake host) and `cargo test` (service / acquire add their own). Add a `tests/test_*.lua`
   file to `FILES` in `tests/run.lua` for a new area.
 - **Online failover, for real** — a mock OpenAI endpoint (`python3 -I scripts/mock_llm.py`, on
   `127.0.0.1:48200`), `GROQ_API_KEY=x EVOLUA_LLM_BASE=http://127.0.0.1:48200/v1 evolua --llm-api
@@ -152,8 +153,9 @@ Two layers:
   `state/evolua.log`; the scripted suite is `scripts/fulltest.sh` (what each check proves:
   docs/TESTING.md). CI (`.github/workflows/ci.yml`) runs clippy, both unit suites and it.
 
-`./clean.sh` wipes all evolved organs/reports/memory so the next run starts from a
-never-lived state (use `EVOLUA_HOME=/path ./clean.sh` for a custom home).
+`./clean.sh` wipes evolved and model-written organs, reports, every `state/` file, the approval
+inbox and the colony dir so the next run starts from a never-lived state (`models/` and `keys/`
+are kept; use `EVOLUA_HOME=/path ./clean.sh` for a custom home).
 
 ## Architecture
 
@@ -351,8 +353,8 @@ unhandled stimulus (`Evolver:template_for` says no blueprint answers it). The lo
    **column check** on a table: every capture must be one whole field and the same field on every
    line (a capture that is a piece of a field — `3` out of `3.0Gi` — or drifts between columns is
    rejected with the column map); **same-approach guard**: a fingerprint (events, command, pattern,
-   handled, emit) equal to a failed attempt is rejected; three identical rejections → the need
-   backs off (`S.cooldown`).
+   handled, emit) equal to a failed attempt is rejected; when the last of a cycle's tries is
+   such a same-approach rejection the need backs off (`S.cooldown`).
 5. **Install** via `ctx.registry:load`, record the birth as template `synth:llm`, keep the source
    so a cull by any path still yields a lesson.
 6. **Select** — honest fitness + **report value** (`reporter.lua`: a report after ≥ `report_stale_ticks`

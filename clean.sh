@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Reset EvoLua to a fresh, never-lived state: wipe all evolved organs, reports
-# and memory. The organism regrows everything on next run.
+# Reset EvoLua to a fresh, never-lived state: wipe all evolved and model-written
+# organs, reports, memory and the other state files, the approval inbox and the
+# colony dir. The organism regrows everything on next run. Kept: models/ (downloads
+# are expensive) and keys/ (your API keys).
 #
 #   ./clean.sh            # clean the OS data dir (binary mode) + local lua/ dir
 #   EVOLUA_HOME=/path ./clean.sh   # clean a custom home
@@ -18,9 +20,10 @@ fi
 
 for base in "$HOME_DIR" "lua"; do
   [ -d "$base" ] || continue
-  rm -f  "$base"/plugins/gen_*.lua 2>/dev/null || true
-  rm -f  "$base"/reports/*.md       2>/dev/null || true
-  rm -f  "$base"/state/*.lua "$base"/state/*.log 2>/dev/null || true
+  rm -f  "$base"/plugins/gen_*.lua "$base"/plugins/syn_*.lua 2>/dev/null || true
+  rm -f  "$base"/reports/*.md 2>/dev/null || true
+  rm -f  "$base"/state/* 2>/dev/null || true          # memory, logs, repertoire, heartbeat, vitals, mesh_*
+  rm -rf "$base"/approvals "$base"/colony "$base"/sandbox 2>/dev/null || true
 done
 rm -rf evolua 2>/dev/null || true   # stray nested dir
-echo "EvoLua reset — cleared organs/reports/memory in: $HOME_DIR and ./lua"
+echo "EvoLua reset — cleared organs/reports/state/approvals/colony in: $HOME_DIR and ./lua (models/ and keys/ kept)"

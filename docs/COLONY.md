@@ -114,9 +114,10 @@ protected singleton, so no drive can grow a second one (earlier versions let the
 mutation copy it up to `max_per_template = 3`, and a two-colony run handled every ping twice).
 
 Children are **mortal** (`clone_child_ticks`, then they rest) and only the root divides — a
-star colony, not a tree. The safety caps live in `config.lua` and are **not genes**, so no gene
-change can loosen the *bounds* (the colony's own genes — its comms/clone cadences — keep their
-seeded values, since protected organs don't mutate).
+star colony, not a tree. The depth and size caps live in `config.lua` and are **not genes**; the
+cooldown (`clone_cooldown`, 30 s of wall clock) is a gene of the colony organ, and stays at its
+seeded value only because protected organs never mutate — so no gene change can loosen any of
+the three *bounds*.
 
 ## 2. When to split is a decision
 
