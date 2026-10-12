@@ -174,8 +174,9 @@ EvoLua — a self-evolving Lua organism
   --autonomy <lvl>           autonomy ceiling: learn|report|notify|suggest|act (default: report;
                              suggest = proposed actions + model upgrades go to approvals/)
   --brain <kind>             decision brain: auto|rules|remote|gguf|embedded|service|apple (default: auto
-                             = an explicit/saved/downloaded model, else the strongest one already
-                             on this machine, else the embedded one; = EVOLUA_BRAIN)
+                             = an explicit model, else an online service with a key, else the
+                             strongest brain already on this machine, else the downloaded/embedded
+                             default, else the keyless endpoint, else rules; = EVOLUA_BRAIN)
   --unattended               act on its own (reversible, safe-listed verbs only) and download a
                              better decision model WITHOUT approval (= EVOLUA_UNATTENDED=1)
 

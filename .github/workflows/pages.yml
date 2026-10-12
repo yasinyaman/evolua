@@ -1,13 +1,13 @@
 name: pages
 
 # Publishes the project site to GitHub Pages: the hand-written landing page in site/
-# plus README.md, README.tr.md and docs/*.md rendered with pandoc (scripts/build_site.sh).
+# plus README.md and docs/*.md rendered with pandoc (scripts/build_site.sh).
 # Pages must be set to "GitHub Actions" as the source once (Settings → Pages).
 
 on:
   push:
     branches: [main]
-    paths: ["site/**", "docs/**", "README.md", "README.tr.md", "scripts/build_site.sh", ".github/workflows/pages.yml"]
+    paths: ["site/**", "docs/**", "README.md", "scripts/build_site.sh", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:

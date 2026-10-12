@@ -2,7 +2,7 @@
 # Build the GitHub Pages site into _site/:
 #   site/index.html, style.css, favicon.svg  → copied as they are (the landing page)
 #   README.md                                 → readme.html
-#   docs/*.md (English only; *.tr.md skipped) → docs/*.html
+#   docs/*.md                                 → docs/*.html
 #   docs/assets/*                             → assets/*
 # Needs pandoc (the Pages workflow installs it; Ubuntu runners have it).
 #
@@ -34,7 +34,6 @@ render() {
 render README.md "$OUT/readme.html" . "README" "README"
 for f in docs/*.md; do
   name=$(basename "$f" .md)
-  case "$name" in *.tr) continue ;; esac          # the site is English only
   render "$f" "$OUT/docs/$name.html" .. "docs"
 done
 

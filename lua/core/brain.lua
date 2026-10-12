@@ -13,8 +13,9 @@
 -- feature `remote`): a hosted model costs this host nothing but a socket, so a
 -- small machine needs no RAM for a model at all. Order for one life:
 --   explicit ($EVOLUA_MODEL / --model) → online with a key (free tiers first) →
---   the biggest usable brain on this machine → the keyless public endpoint →
---   the default (downloaded, else embedded) → rules.
+--   the biggest usable brain on this machine → the default (downloaded, else
+--   embedded) → with no default (or one that fails to load) the keyless public
+--   endpoint → rules.
 -- While the online service is backed off (dead network, quota), the host answers
 -- from the local brain instead; the model manager (failover) makes sure one is
 -- loaded then, and unloads it again when the service is back (llm_remote_only).

@@ -1,7 +1,5 @@
 # EvoLua — annotated demo run
 
-🇬🇧 English · [🇹🇷 Türkçe](DEMO.tr.md)
-
 This is a **real, unedited capture** of a single bounded run of the current binary, so a reviewer
 can see what the organism actually does without running it. Reproduce it with:
 
@@ -9,8 +7,8 @@ can see what the organism actually does without running it. Reproduce it with:
 cargo build --release
 EVOLUA_WATCHDOG_SECS=2 ./target/release/evolua \
   --ticks 300 --tick-seconds 0.2 --clone --clone-ignore-battery --no-synth
-# then inspect the data home it printed — especially state/evolution.log, state/repertoire.txt,
-# colony/lineage.log (or set EVOLUA_HOME=/tmp/evolua-demo)
+# then inspect the data home (macOS: ~/Library/Application Support/EvoLua; or choose one with
+# EVOLUA_HOME=/tmp/evolua-demo) — especially state/evolution.log, state/repertoire.txt, colony/lineage.log
 ```
 
 > `--clone` enables self-replication; `--clone-ignore-battery` lets it spawn on a laptop on
@@ -122,7 +120,7 @@ capability-isolated by construction) — a genome like
 ```lua
 ctx.bus:subscribe("self.heartbeat", function(ev)
   local d = ev.data or {}
-  if (tonumber(d["tick"]) or 0) >= 10 then
+  if (tonumber(d["tick"]) or 0) >= 10 and ready(1) then   -- ready(): at most once per rule_cooldown ticks
     ctx.report(SELF, "rule 1 on self.heartbeat"); return { handled = true, reward = 1 }
   end
   return false
@@ -263,7 +261,7 @@ four seconds later, and the GB10's came back in the same round:
 
 ```
 # gb10: state/mesh.log
-mesh up: id=gb10-node port=7707 seeds=["100.75.73.106:7707"]
+mesh up: id=gb10-node port=7707 seeds=["100.75.73.106:7707"] token=false gateway=false
 peer discovered: mac-node at 100.75.73.106:7707 (Yasins-MacBook-Air.local)
 sync: genepool/cpu_guard received
 sync: genepool/error_reporter received

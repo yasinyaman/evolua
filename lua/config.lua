@@ -76,7 +76,8 @@ return {
   -- ONLINE brain (optional): a hosted LLM before any local model. A small host then needs
   -- no RAM for a model at all. "auto" (default) = the first provider whose key is in the
   -- environment or in <home>/keys/<provider>, FREE tiers first (llm_providers order); a
-  -- machine brain comes next, then the keyless public endpoint, then the default/rules.
+  -- machine brain comes next, then the default (downloaded/embedded), then — with no
+  -- default — the keyless public endpoint, then rules.
   -- Or a provider id, or an OpenAI-compatible base URL ("anthropic+URL" for proxies).
   -- false disables online brains entirely. CLI: --llm-api --llm-model --llm-key-env.
   llm_api             = "auto",

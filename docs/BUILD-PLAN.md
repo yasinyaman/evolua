@@ -1,13 +1,13 @@
 # EvoLua — Build Plan
 
 > **Status: all five phases implemented.** The Lua side was verified over the bridge with real
-> perception + timing; the Rust side (`main.rs`, `supervisor.rs`, `brain.rs`, `llm.rs`, `remote.rs`, `acquire.rs`, `mesh.rs`) was
+> perception + timing; the Rust side (`main.rs`, `host.rs`, `supervisor.rs`, `mesh.rs`, `netproxy.rs`, `brain.rs`, `discover.rs`, `service.rs`, `apple.rs`, `llm.rs`, `remote.rs`, `acquire.rs`) was
 > written to the proven mlua pattern and built/tested with a native `cargo build`. Phase 5
 > (colony / supervisor / purpose / exploration) was verified with bounded runs (27/27 green —
 > `docs/TESTING.md`). Design rationale: `docs/ROADMAP.md` · deep-dive: `docs/COLONY.md`.
 
 ## Phase 0 — Setup
-- [x] `evolua/` standalone crate (its own `[workspace]`; doesn't touch mini-lua-coder)
+- [x] standalone crate (its own `[workspace]` root, so it builds alone even inside another Cargo workspace)
 - [x] Single-binary host (`src/main.rs`): embeds Lua sources into `package.preload`
 - [x] Environment-appropriate data home resolution (mac/linux/win) + `EVOLUA_HOME`
 

@@ -1,6 +1,6 @@
 # EvoLua — a self-evolving Lua organism
 
-🇬🇧 English · [🇹🇷 Türkçe](README.tr.md) · **site:** [yaman.dev/evolua](https://yaman.dev/evolua/)
+**Site:** [yaman.dev/evolua](https://yaman.dev/evolua/)
 
 EvoLua is an experimental, self-contained "digital organism." It **perceives** its host
 environment (per-process CPU/RAM, OS error logs, the filesystem), builds an entity-based
@@ -274,7 +274,8 @@ table (`bus`, `memory`, `registry`, `evolver`, `worldmodel`, `reasoner`, `autono
 | **directed** | `--goal "..."` | grows goal-relevant organs first (bilingual TR/EN keyword match; generic words like *monitor*/*izle*/*report* alone don't trigger growth), then free evolution continues |
 
 Directed-mode matching is bilingual: "hata"/"error" → `error_reporter`, "dosya"/"file" →
-`fs_journal`, "cpu"/"kaynak"/"resource" → guards, etc.
+`fs_journal`, "cpu"/"işlemci" → `cpu_guard`, "memory"/"bellek" → `mem_guard`; a generic word
+("kaynak"/"resource", "monitor") only counts together with a specific one.
 
 ---
 
@@ -449,7 +450,7 @@ narrated capture of a real run, see [docs/DEMO.md](docs/DEMO.md).
 lua tests/run.lua      # unit tests (stock Lua)
 cargo test             # host unit tests
 scripts/fulltest.sh    # bounded behavior suite
-./clean.sh             # wipe evolved organs/reports/memory so the next run starts never-lived
+./clean.sh             # wipe organs/reports/state/approvals/colony so the next run starts never-lived (keeps models/, keys/)
 ```
 
 ---
