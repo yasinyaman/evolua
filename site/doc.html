@@ -14,16 +14,26 @@
 <header class="top"><div class="wrap">
   <a class="brand" href="$root$/">Evo<b>Lua</b></a>
   <nav class="nav">
+$if(tr)$
+    <a href="$root$/readme.tr.html">README</a>
+    <a href="$root$/docs/DEMO.tr.html">Demo</a>
+    <a href="$root$/docs/COLONY.html">Koloni (EN)</a>
+    <a href="$root$/docs/TRIALS.html">Denemeler (EN)</a>
+    <a href="$root$/docs/ROADMAP.html">Yol haritası (EN)</a>
+    <a href="$alt$">🇬🇧 English</a>
+$else$
     <a href="$root$/readme.html">README</a>
     <a href="$root$/docs/DEMO.html">Demo</a>
     <a href="$root$/docs/COLONY.html">Colony</a>
     <a href="$root$/docs/TRIALS.html">Trials</a>
     <a href="$root$/docs/ROADMAP.html">Roadmap</a>
+    <a href="$alt$">🇹🇷 Türkçe</a>
+$endif$
     <a href="https://github.com/yasinyaman/evolua">GitHub</a>
   </nav>
 </div></header>
 <main class="doc">
-  <div class="crumbs"><a href="$root$/">EvoLua</a> › $if(crumb)$$crumb$$else$docs$endif$ › <a href="https://github.com/yasinyaman/evolua/blob/main/$source$">source on GitHub</a></div>
+  <div class="crumbs"><a href="$root$/">EvoLua</a> › $if(crumb)$$crumb$$else$docs$endif$ › <a href="https://github.com/yasinyaman/evolua/blob/main/$source$">$if(tr)$GitHub'daki kaynak$else$source on GitHub$endif$</a></div>
 $if(toc)$
   <nav class="toc">$table-of-contents$</nav>
 $endif$
