@@ -1,5 +1,5 @@
 -- pandoc Lua filter: point the repo's Markdown cross-links at the rendered pages.
---   README.md → readme.html · README.tr.md → readme.tr.html · docs/X.md → docs/X.html
+--   README.md → readme.html · docs/X.md → docs/X.html · Turkish files → their GitHub page
 -- The page's own location is passed as metadata `root` ("." for top-level pages,
 -- ".." for pages under docs/) so links resolve from either place.
 local root = "."
@@ -18,7 +18,9 @@ local function rewrite(target)
   local out
   if path == "CLAUDE.md" then return "https://github.com/yasinyaman/evolua/blob/main/CLAUDE.md" .. frag end
   if path == "README.md" then out = root .. "/readme.html"
-  elseif path == "README.tr.md" then out = root .. "/readme.tr.html"
+  elseif path == "README.tr.md" then return "https://github.com/yasinyaman/evolua/blob/main/README.tr.md" .. frag
+  elseif path:match("%.tr%.md$") then                  -- Turkish docs are not on the site
+    return "https://github.com/yasinyaman/evolua/blob/main/" .. (path:match("^docs/") and path or ("docs/" .. path)) .. frag
   elseif path:match("^docs/") then out = root .. "/" .. path:gsub("%.md$", ".html")
   else out = path:gsub("%.md$", ".html") end           -- a sibling doc, same directory
   return out .. frag
